@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: meridian
+      POSTGRES_PASSWORD: meridian
+      POSTGRES_DB: meridian
+    ports:
+      - "5433:5432"
+    volumes:
+      - meridian_pg:/var/lib/postgresql/data
+
+volumes:
+  meridian_pg:

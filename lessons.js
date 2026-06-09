@@ -10,6 +10,7 @@ import fs from "fs";
 import { log } from "./logger.js";
 import { getSharedLessonsForPrompt, pushHiveLesson, pushHivePerformanceEvent } from "./hivemind.js";
 import { repoPath } from "./repo-root.js";
+import { getRecorder } from './experiment-recorder.js';
 
 const USER_CONFIG_PATH = repoPath("user-config.json");
 
@@ -153,6 +154,7 @@ export async function recordPerformance(perf) {
   }
 
   save(data);
+  getRecorder()?.recordClose(entry.position, entry);
   if (lesson) {
     void pushHiveLesson(lesson);
   }

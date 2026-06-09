@@ -34,6 +34,11 @@ import { stageSignals } from "./signal-tracker.js";
 import { getWeightsSummary } from "./signal-weights.js";
 import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnabled, pullHiveMindLessons, pullHiveMindPresets, registerHiveMindAgent, startHiveMindBackgroundSync } from "./hivemind.js";
 import { appendDecision } from "./decision-log.js";
+import { getRecorder, initRecorder } from './experiment-recorder.js';
+import { initDb } from './db/connection.js';
+import { createOrResumeExperiment } from './db/experiments.js';
+import { startPostgresSync, stopPostgresSync } from './db/sync.js';
+import { closePool } from './db/postgres.js';
 
 import { REPO_ROOT, repoPath } from "./repo-root.js";
 
@@ -50,6 +55,21 @@ if (isMain) {
   }
   log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
   log("startup", `Model: ${process.env.LLM_MODEL || "hermes-3-405b"}`);
+
+  // Auto-init experiment recording when running in dry-run mode
+  if (process.env.DRY_RUN === "true") {
+    try {
+      const label = process.env.EXPERIMENT_LABEL || `dry-run-${new Date().toISOString().slice(0, 10)}`;
+      const _db = initDb();
+      const experiment = createOrResumeExperiment(_db, { label });
+      initRecorder(_db, experiment.id);
+      startPostgresSync(_db);
+      log("startup", `[experiment] Recording to "${experiment.label}" (${experiment.id})`);
+    } catch (err) {
+      log("startup_warn", `[experiment] Failed to init recording: ${err.message}`);
+    }
+  }
+
   ensureAgentId();
   bootstrapHiveMind().catch((error) => log("hivemind_warn", `Bootstrap failed: ${error.message}`));
   startHiveMindBackgroundSync();
@@ -229,6 +249,7 @@ export async function runManagementCycle({ silent = false } = {}) {
     // Snapshot + load pool memory
     const positionData = positions.map((p) => {
       recordPositionSnapshot(p.pool, p);
+      getRecorder()?.recordSnapshot(p.pool, p);
       return { ...p, recall: recallForPool(p.pool) };
     });
 
@@ -842,6 +863,8 @@ async function shutdown(signal) {
   } else {
     log("shutdown", "Open position snapshot skipped during shutdown timeout");
   }
+  stopPostgresSync();
+  await closePool();
   process.exit(0);
 }
 

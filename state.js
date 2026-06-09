@@ -11,6 +11,7 @@
 import fs from "fs";
 import { log } from "./logger.js";
 import { repoPath } from "./repo-root.js";
+import { getRecorder } from './experiment-recorder.js';
 
 const STATE_FILE = repoPath("state.json");
 
@@ -116,6 +117,7 @@ export function trackPosition({
   };
   pushEvent(state, { action: "deploy", position, pool_name: pool_name || pool });
   save(state);
+  getRecorder()?.recordDeploy(position, state.positions[position]);
   log("state", `Tracked new position: ${position} in pool ${pool}`);
 }
 

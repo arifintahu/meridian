@@ -14,11 +14,15 @@
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:restart": "pm2 restart meridian --update-env",
     "pm2:logs": "pm2 logs meridian --lines 100",
-    "dev": "DRY_RUN=true node index.js",
+    "dev": "cross-env DRY_RUN=true node index.js",
     "test": "npm run test:syntax",
     "test:syntax": "find . -path ./node_modules -prune -o -name '*.js' -exec node --check {} \\;",
     "test:screen": "node test/test-screening.js",
-    "test:agent": "DRY_RUN=true node test/test-agent.js",
+    "test:agent": "cross-env DRY_RUN=true node test/test-agent.js",
+    "test:experiment": "node --test test/experiment/db.test.js test/experiment/recorder.test.js",
+    "pg:up": "docker compose up -d",
+    "pg:down": "docker compose down",
+    "pg:migrate": "node scripts/pg-migrate.js",
     "postinstall": "node scripts/patch-anchor.js"
   },
   "knip": {
@@ -29,14 +33,20 @@
   "dependencies": {
     "@meteora-ag/dlmm": "1.9.4",
     "@solana/web3.js": "^1.95.0",
+    "better-sqlite3": "^9.6.0",
     "bn.js": "^5.2.1",
     "bs58": "^5.0.0",
     "dotenv": "^17.3.1",
     "jsonrepair": "^3.13.3",
     "node-cron": "^3.0.3",
-    "openai": "^4.73.0"
+    "openai": "^4.73.0",
+    "pg": "^8.13.0",
+    "uuid": "^10.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0"
   }
 }

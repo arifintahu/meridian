@@ -41,3 +41,5 @@ discord-signals.json
 
 # Claude Code runtime lock
 .claude/scheduled_tasks.lock
+
+experiment.sqlite*

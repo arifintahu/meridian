@@ -1,6 +1,7 @@
 import fs from "fs";
 import { log } from "./logger.js";
 import { repoPath } from "./repo-root.js";
+import { getRecorder } from './experiment-recorder.js';
 
 const DECISION_LOG_FILE = repoPath("decision-log.json");
 const MAX_DECISIONS = 100;
@@ -45,6 +46,7 @@ export function appendDecision(entry) {
   data.decisions.unshift(decision);
   data.decisions = data.decisions.slice(0, MAX_DECISIONS);
   save(data);
+  getRecorder()?.recordScreening(decision);
   return decision;
 }
 
