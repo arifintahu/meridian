@@ -1706,6 +1706,9 @@ export async function closePosition({ position_address, reason }) {
       const minutesOOR = tracked.out_of_range_since
         ? Math.floor((Date.now() - new Date(tracked.out_of_range_since).getTime()) / 60000)
         : 0;
+      // `tracked` was read before recordClose, which does not touch out_of_range_since,
+      // so OOR state is stable across this call. Keep this read before any state
+      // mutation if the close path is ever refactored.
       const closeMetrics = await computeDryRunCloseMetrics(tracked);
       await recordPerformance({
         position: position_address,
