@@ -8,6 +8,10 @@ describe('isLowYieldClose', () => {
   it('closes when aged past the gate and yield is below the floor', () => {
     assert.equal(isLowYieldClose({ feePerTvl24h: 3, ageMinutes: 70, ...cfg }), true);
   });
+  it('closes at the exact age-gate boundary, not one minute before', () => {
+    assert.equal(isLowYieldClose({ feePerTvl24h: 3, ageMinutes: 60, ...cfg }), true);
+    assert.equal(isLowYieldClose({ feePerTvl24h: 3, ageMinutes: 59, ...cfg }), false);
+  });
   it('does NOT close a brand-new position (age 0)', () => {
     assert.equal(isLowYieldClose({ feePerTvl24h: 0, ageMinutes: 0, ...cfg }), false);
   });
