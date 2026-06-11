@@ -12,6 +12,7 @@ import {
 import BN from "bn.js";
 import bs58 from "bs58";
 import { config, computeDeployAmount, MIN_SAFE_BINS_BELOW } from "../config.js";
+import { simulateDryRunPnl } from "../dry-run-pnl.js";
 import { log } from "../logger.js";
 import {
   trackPosition,
@@ -26,7 +27,7 @@ import {
 } from "../state.js";
 import { recordPerformance } from "../lessons.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
-import { normalizeMint } from "./wallet.js";
+import { normalizeMint, getWalletBalances } from "./wallet.js";
 import { appendDecision } from "../decision-log.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "./agent-meridian.js";
 import { getAndClearStagedSignals } from "../signal-tracker.js";
@@ -1197,6 +1198,11 @@ async function buildDryRunPositions(walletAddress) {
   if (!tracked.length) return { wallet: walletAddress, total_positions: 0, positions: [], dry_run: true };
 
   const positions = [];
+  let solPrice = 0;
+  try {
+    const bal = await getWalletBalances();
+    solPrice = bal?.sol_price ?? 0;
+  } catch { /* price unavailable → USD fields stay 0, pnl_pct still valid */ }
   for (const t of tracked) {
     try {
       const pool = await getPool(t.pool).catch(() => null);
@@ -1230,6 +1236,18 @@ async function buildDryRunPositions(walletAddress) {
         ? Math.floor((Date.now() - new Date(t.deployed_at).getTime()) / 60000)
         : null;
 
+      const minutesInRange = Math.max(0, (ageMinutes ?? 0) - minutesOOR);
+      const sim = simulateDryRunPnl({
+        amountSol: t.amount_sol,
+        binRange: t.bin_range,
+        activeBinAtDeploy: t.active_bin_at_deploy,
+        currentActiveBin: currentBinId,
+        binStep: t.bin_step,
+        strategy: t.strategy,
+        feePerTvl24h,
+        minutesInRange,
+        solPrice,
+      });
       positions.push({
         ...refreshed,
         pair: t.pool_name || t.pool.slice(0, 8),
@@ -1241,11 +1259,11 @@ async function buildDryRunPositions(walletAddress) {
         minutes_out_of_range: minutesOOR,
         age_minutes: ageMinutes,
         hours_held: ageMinutes != null ? ageMinutes / 60 : 0,
-        pnl_pct: 0,
-        pnl_usd: 0,
-        total_value_usd: 0,
+        pnl_pct: Math.round(sim.pnl_pct * 100) / 100,
+        pnl_usd: Math.round(sim.pnl_usd * 100) / 100,
+        total_value_usd: Math.round(sim.position_value_sol * solPrice * 100) / 100,
         fee_per_tvl_24h: feePerTvl24h,
-        unclaimed_fees_usd: 0,
+        unclaimed_fees_usd: Math.round(sim.fees_earned_usd * 100) / 100,
         deployed_at: t.deployed_at,
         amount_sol: t.amount_sol,
         bin_step: t.bin_step,
