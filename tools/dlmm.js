@@ -1192,6 +1192,61 @@ async function fetchRawOpenPositionsFromMeridian({ walletAddress, agentId }) {
   };
 }
 
+// ─── DRY_RUN close-time PnL ─────────────────────────────────────
+// Compute close-time PnL/fee values for a dry-run paper position by running the
+// shared PnL sim against live pool state. Returns USD figures shaped for
+// recordPerformance (lessons.js derives pnl_pct = (final + fees - initial)/initial,
+// so these values reproduce sim.pnl_pct exactly when solPrice > 0).
+// NOTE: the live/snapshot path in buildDryRunPositions gathers the same inputs
+// inline (interleaved with OOR marking + object building); this helper keeps the
+// close path standalone to avoid disturbing that reviewed loop. The PnL math
+// itself is shared via simulateDryRunPnl.
+async function computeDryRunCloseMetrics(tracked) {
+  let solPrice = 0;
+  try {
+    const bal = await getWalletBalances();
+    solPrice = bal?.sol_price ?? 0;
+  } catch { /* price unavailable → USD fields 0, pnl 0 for this close */ }
+
+  const pool = await getPool(tracked.pool).catch(() => null);
+  const activeBin = pool ? await pool.getActiveBin().catch(() => null) : null;
+  const currentBinId = activeBin?.binId ?? null;
+
+  let feePerTvl24h = null;
+  try {
+    const { getPoolDetail } = await import("./screening.js");
+    const detail = await getPoolDetail({ pool_address: tracked.pool, timeframe: "24h" });
+    const ratio = Number(detail?.fee_active_tvl_ratio ?? detail?.fee_tvl_ratio);
+    feePerTvl24h = Number.isFinite(ratio) ? ratio : null;
+  } catch { /* discovery API miss — leave null */ }
+
+  const ageMinutes = tracked.deployed_at
+    ? Math.floor((Date.now() - new Date(tracked.deployed_at).getTime()) / 60000)
+    : 0;
+  const minutesOOR = tracked.out_of_range_since
+    ? Math.floor((Date.now() - new Date(tracked.out_of_range_since).getTime()) / 60000)
+    : 0;
+  const minutesInRange = Math.max(0, ageMinutes - minutesOOR);
+
+  const sim = simulateDryRunPnl({
+    amountSol: tracked.amount_sol,
+    binRange: tracked.bin_range,
+    activeBinAtDeploy: tracked.active_bin_at_deploy,
+    currentActiveBin: currentBinId,
+    binStep: tracked.bin_step,
+    strategy: tracked.strategy,
+    feePerTvl24h,
+    minutesInRange,
+    solPrice,
+  });
+
+  return {
+    initial_value_usd: tracked.amount_sol * solPrice,
+    final_value_usd: sim.position_value_sol * solPrice,
+    fees_earned_usd: sim.fees_earned_usd,
+  };
+}
+
 // ─── DRY_RUN Paper Positions ───────────────────────────────────
 async function buildDryRunPositions(walletAddress) {
   const tracked = getTrackedPositions(true); // open positions only
@@ -1651,6 +1706,7 @@ export async function closePosition({ position_address, reason }) {
       const minutesOOR = tracked.out_of_range_since
         ? Math.floor((Date.now() - new Date(tracked.out_of_range_since).getTime()) / 60000)
         : 0;
+      const closeMetrics = await computeDryRunCloseMetrics(tracked);
       await recordPerformance({
         position: position_address,
         pool: tracked.pool,
@@ -1663,9 +1719,9 @@ export async function closePosition({ position_address, reason }) {
         fee_tvl_ratio: tracked.fee_tvl_ratio || null,
         organic_score: tracked.organic_score || null,
         amount_sol: tracked.amount_sol,
-        fees_earned_usd: 0,
-        final_value_usd: 0,
-        initial_value_usd: 0,
+        fees_earned_usd: closeMetrics.fees_earned_usd,
+        final_value_usd: closeMetrics.final_value_usd,
+        initial_value_usd: closeMetrics.initial_value_usd,
         minutes_in_range: minutesHeld - minutesOOR,
         minutes_held: minutesHeld,
         close_reason: closeReason,
