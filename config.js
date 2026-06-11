@@ -229,6 +229,32 @@ export function computeDeployAmount(walletSol) {
 }
 
 /**
+ * Curated config snapshot for experiment recording. Captures tuning-relevant
+ * sections only and strips secret-bearing sections (api/jupiter/hiveMind hold
+ * API keys + referral account; tokens holds mint maps) so nothing sensitive is
+ * written to SQLite or synced to Postgres.
+ */
+export function snapshotConfig(cfg = config) {
+  return {
+    risk:       { ...cfg.risk },
+    screening:  { ...cfg.screening },
+    management: { ...cfg.management },
+    strategy:   { ...cfg.strategy },
+    schedule:   { ...cfg.schedule },
+    darwin:     { ...cfg.darwin },
+    indicators: { ...cfg.indicators },
+    llm: {
+      managementModel: cfg.llm?.managementModel,
+      screeningModel:  cfg.llm?.screeningModel,
+      generalModel:    cfg.llm?.generalModel,
+      temperature:     cfg.llm?.temperature,
+      maxTokens:       cfg.llm?.maxTokens,
+      maxSteps:        cfg.llm?.maxSteps,
+    },
+  };
+}
+
+/**
  * Reload user-config.json and apply updated screening thresholds to the
  * in-memory config object. Called after threshold evolution so the next
  * agent cycle uses the evolved values without a restart.

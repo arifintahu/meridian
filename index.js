@@ -8,7 +8,7 @@ import { log } from "./logger.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
-import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
+import { config, reloadScreeningThresholds, computeDeployAmount, snapshotConfig } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { executeTool, registerCronRestarter } from "./tools/executor.js";
 import {
@@ -61,7 +61,7 @@ if (isMain) {
     try {
       const label = process.env.EXPERIMENT_LABEL || `dry-run-${new Date().toISOString().slice(0, 10)}`;
       const _db = initDb();
-      const experiment = createOrResumeExperiment(_db, { label });
+      const experiment = createOrResumeExperiment(_db, { label, configSnapshot: snapshotConfig(config) });
       initRecorder(_db, experiment.id);
       startPostgresSync(_db);
       log("startup", `[experiment] Recording to "${experiment.label}" (${experiment.id})`);
