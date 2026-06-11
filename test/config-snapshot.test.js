@@ -5,7 +5,7 @@ import { snapshotConfig } from '../config.js';
 describe('snapshotConfig', () => {
   it('captures the tuning sections', () => {
     const snap = snapshotConfig();
-    for (const k of ['risk', 'screening', 'management', 'strategy', 'schedule', 'darwin', 'llm']) {
+    for (const k of ['risk', 'screening', 'management', 'strategy', 'schedule', 'darwin', 'indicators', 'llm']) {
       assert.ok(snap[k], `missing section: ${k}`);
     }
     assert.equal(typeof snap.management.stopLossPct, 'number');

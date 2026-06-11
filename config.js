@@ -242,7 +242,7 @@ export function snapshotConfig(cfg = config) {
     strategy:   { ...cfg.strategy },
     schedule:   { ...cfg.schedule },
     darwin:     { ...cfg.darwin },
-    indicators: { ...cfg.indicators },
+    indicators: { ...cfg.indicators, intervals: [...(cfg.indicators?.intervals ?? [])] },
     llm: {
       managementModel: cfg.llm?.managementModel,
       screeningModel:  cfg.llm?.screeningModel,
