@@ -373,6 +373,23 @@ export function getStateSummary() {
 }
 
 /**
+ * Pure predicate: should a position close for low yield?
+ * Requires a real (finite) age past the gate AND a real (non-null) fee/TVL
+ * reading below the floor. A null/undefined age or null yield never closes —
+ * this prevents closing a brand-new position before it can accrue fees.
+ */
+export function isLowYieldClose({ feePerTvl24h, minFeePerTvl24h, ageMinutes, minAgeBeforeYieldCheck }) {
+  const minAge = minAgeBeforeYieldCheck ?? 60;
+  return (
+    feePerTvl24h != null &&
+    minFeePerTvl24h != null &&
+    Number.isFinite(ageMinutes) &&
+    ageMinutes >= minAge &&
+    feePerTvl24h < minFeePerTvl24h
+  );
+}
+
+/**
  * Check all exit conditions for a position (trailing TP, stop loss, OOR, low yield).
  * Updates peak_pnl_pct, trailing_active, and OOR state.
  * @param {string} position_address
@@ -456,13 +473,12 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
 
   // ── Low yield (only after position has had time to accumulate fees) ───
   const { age_minutes } = positionData;
-  const minAgeForYieldCheck = mgmtConfig.minAgeBeforeYieldCheck ?? 60;
-  if (
-    fee_per_tvl_24h != null &&
-    mgmtConfig.minFeePerTvl24h != null &&
-    fee_per_tvl_24h < mgmtConfig.minFeePerTvl24h &&
-    (age_minutes == null || age_minutes >= minAgeForYieldCheck)
-  ) {
+  if (isLowYieldClose({
+    feePerTvl24h: fee_per_tvl_24h,
+    minFeePerTvl24h: mgmtConfig.minFeePerTvl24h,
+    ageMinutes: age_minutes,
+    minAgeBeforeYieldCheck: mgmtConfig.minAgeBeforeYieldCheck,
+  })) {
     return {
       action: "LOW_YIELD",
       reason: `Low yield: fee/TVL ${fee_per_tvl_24h.toFixed(2)}% < min ${mgmtConfig.minFeePerTvl24h}% (age: ${age_minutes ?? "?"}m)`,

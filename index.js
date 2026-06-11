@@ -25,7 +25,7 @@ import {
   createLiveMessage,
 } from "./telegram.js";
 import { generateBriefing } from "./briefing.js";
-import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
+import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, isLowYieldClose, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
@@ -926,11 +926,12 @@ function getDeterministicCloseRule(position, managementConfig) {
   ) {
     return { action: "CLOSE", rule: 4, reason: "OOR" };
   }
-  if (
-    position.fee_per_tvl_24h != null &&
-    position.fee_per_tvl_24h < managementConfig.minFeePerTvl24h &&
-    (position.age_minutes ?? 0) >= 60
-  ) {
+  if (isLowYieldClose({
+    feePerTvl24h: position.fee_per_tvl_24h,
+    minFeePerTvl24h: managementConfig.minFeePerTvl24h,
+    ageMinutes: position.age_minutes,
+    minAgeBeforeYieldCheck: managementConfig.minAgeBeforeYieldCheck,
+  })) {
     return { action: "CLOSE", rule: 5, reason: "low yield" };
   }
   return null;
