@@ -18,9 +18,10 @@ export function binWeight(b, D, L, U, strategy) {
   if (strategy === 'spot') return 1;
   if (strategy === 'curve') {
     const maxDist = Math.max(Math.abs(L - D), Math.abs(U - D));
-    return (maxDist - dist) + 1; // peak at active, tapering to edges
+    return Math.max(1, (maxDist - dist) + 1); // peak at active, tapering to edges
   }
-  // bid_ask (default): linear ramp, heaviest at the far edge
+  // bid_ask (default): linear ramp, heaviest at the far edge.
+  // Any unrecognised strategy also falls through to this branch.
   return dist + 1;
 }
 
@@ -57,7 +58,7 @@ export function simulateDryRunPnl({
   const A = currentActiveBin == null ? D : currentActiveBin; // null → unchanged
   const s = (binStep ?? 0) / 1e4;
 
-  const amount = Number.isFinite(amountSol) ? amountSol : 0;
+  const amount = Number.isFinite(amountSol) && amountSol > 0 ? amountSol : 0;
 
   const valid =
     amount > 0 &&

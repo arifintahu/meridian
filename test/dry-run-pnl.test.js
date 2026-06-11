@@ -13,6 +13,10 @@ describe('binWeight', () => {
   it('curve peaks at the active bin', () => {
     assert.ok(binWeight(0, 0, -10, 0, 'curve') > binWeight(-10, 0, -10, 0, 'curve'));
   });
+  it('curve: weight at active bin equals maxDist + 1', () => {
+    // D=0, L=-10, U=0 → maxDist=10, dist at b=0 is 0 → weight = 10 + 1 = 11
+    assert.equal(binWeight(0, 0, -10, 0, 'curve'), 11);
+  });
 });
 
 describe('simulateDryRunPnl — price PnL', () => {
@@ -41,6 +45,8 @@ describe('simulateDryRunPnl — price PnL', () => {
     assert.ok(b.price_pnl_sol < a.price_pnl_sol);
   });
   it('bid_ask loses LESS than spot on a partial dip (liquidity sits at the far edge)', () => {
+    // On a shallow dip only the near-D bins convert; bid_ask weights those lightly
+    // (heavy weight sits on the deep, still-unconverted bins) → smaller realized loss.
     const bid  = simulateDryRunPnl({ ...base, strategy: 'bid_ask', currentActiveBin: -3 });
     const spot = simulateDryRunPnl({ ...base, strategy: 'spot',    currentActiveBin: -3 });
     assert.ok(bid.price_pnl_sol < 0 && spot.price_pnl_sol < 0);
@@ -84,5 +90,12 @@ describe('simulateDryRunPnl — guards', () => {
       binStep: 100, strategy: 'bid_ask', feePerTvl24h: 0, minutesInRange: 0, solPrice: 100,
     });
     assert.ok(Math.abs(r.price_pnl_sol) < 1e-9);
+  });
+  it('single-bin range (L==U) with price below the bin → loss', () => {
+    const r = simulateDryRunPnl({
+      amountSol: 1, binRange: { min: 0, max: 0 }, activeBinAtDeploy: 0,
+      currentActiveBin: -1, binStep: 100, strategy: 'bid_ask',
+    });
+    assert.ok(r.price_pnl_sol < 0);
   });
 });
