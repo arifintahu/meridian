@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import { repoPath } from '../repo-root.js';
+import { insertOutbox } from './outbox.js';
 
 /**
  * Create a new experiment or resume one with the same label.
@@ -9,7 +10,13 @@ import { repoPath } from '../repo-root.js';
  */
 export function createOrResumeExperiment(db, { label, notes = null, configSnapshot = null }) {
   const existing = db.prepare('SELECT * FROM experiments WHERE label = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1').get(label);
-  if (existing) return existing;
+  if (existing) {
+    // Re-queue the experiment row so it reaches Postgres even if the outbox was
+    // previously cleared or this is a fresh Postgres instance. The UPSERT in
+    // sync.js is idempotent, so duplicate rows are harmless.
+    insertOutbox(db, 'experiments', existing.id, existing);
+    return existing;
+  }
 
   const id = `exp-${uuidv4().slice(0, 8)}`;
   const snapshot = configSnapshot || loadUserConfig();
@@ -18,7 +25,11 @@ export function createOrResumeExperiment(db, { label, notes = null, configSnapsh
     VALUES (?, ?, ?, ?, ?)
   `).run(id, label, Date.now(), JSON.stringify(snapshot), notes);
 
-  return db.prepare('SELECT * FROM experiments WHERE id = ?').get(id);
+  const saved = db.prepare('SELECT * FROM experiments WHERE id = ?').get(id);
+  // Queue the experiment row BEFORE any child rows (screening_events, positions)
+  // are inserted so Postgres FK constraints are satisfied when the outbox syncs.
+  insertOutbox(db, 'experiments', id, saved);
+  return saved;
 }
 
 /**

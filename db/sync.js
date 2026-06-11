@@ -96,6 +96,9 @@ export function stopPostgresSync() {
   if (_timer) { clearInterval(_timer); _timer = null; }
 }
 
+// Process order ensures parent rows reach Postgres before child rows (FK safety).
+const TABLE_SYNC_ORDER = { experiments: 0, positions: 1, screening_events: 2, position_snapshots: 3 };
+
 /**
  * Run one batch of outbox syncs.
  * @private
@@ -103,6 +106,10 @@ export function stopPostgresSync() {
 async function runSyncBatch(db, pool) {
   const rows = getPendingOutbox(db, Number(process.env.EXPERIMENT_SYNC_BATCH_SIZE) || 100);
   if (!rows.length) return;
+
+  // Sort so parent tables (experiments) always arrive before child tables,
+  // even if the outbox rows were inserted out of order (e.g. after a fix deploy).
+  rows.sort((a, b) => (TABLE_SYNC_ORDER[a.table_name] ?? 99) - (TABLE_SYNC_ORDER[b.table_name] ?? 99));
 
   for (const row of rows) {
     const build = UPSERT[row.table_name];

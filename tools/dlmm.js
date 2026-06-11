@@ -20,6 +20,7 @@ import {
   recordClaim,
   recordClose,
   getTrackedPosition,
+  getTrackedPositions,
   minutesOutOfRange,
   syncOpenPositions,
 } from "../state.js";
@@ -576,20 +577,47 @@ export async function deployPosition({
   }
 
   if (process.env.DRY_RUN === "true") {
+    const fakePosition = `DRY${pool_address.slice(0, 8)}${Date.now().toString(36).toUpperCase()}`;
+    const binRangeMin = activeBin.binId - activeBinsBelow;
+    const binRangeMax = activeBin.binId + activeBinsAbove;
+    const signalSnapshot = config.darwin?.enabled
+      ? getAndClearStagedSignals(pool_address, baseMint)
+      : null;
+    trackPosition({
+      position: fakePosition,
+      pool: pool_address,
+      pool_name,
+      strategy: activeStrategy,
+      bin_range: { min: binRangeMin, max: binRangeMax, bins_below: activeBinsBelow, bins_above: activeBinsAbove },
+      amount_sol: finalAmountY,
+      amount_x: finalAmountX,
+      active_bin: activeBin.binId,
+      bin_step: actualBinStep,
+      volatility: normalizedVolatility,
+      fee_tvl_ratio: fee_tvl_ratio ?? null,
+      organic_score: organic_score ?? null,
+      initial_value_usd: initial_value_usd ?? null,
+      signal_snapshot: signalSnapshot,
+      entry_mcap: entry_mcap ?? null,
+      entry_tvl: entry_tvl ?? null,
+      entry_volume: entry_volume ?? null,
+      entry_holders: entry_holders ?? null,
+    });
+    log("dry_run", `Paper position opened: ${fakePosition} in ${pool_name || pool_address.slice(0, 8)}`);
     return {
+      success: true,
       dry_run: true,
-      would_deploy: {
-        pool_address,
-        strategy: activeStrategy,
-        bins_below: activeBinsBelow,
-        bins_above: activeBinsAbove,
-        downside_pct: downside_pct ?? null,
-        upside_pct: upside_pct ?? null,
-        amount_x: finalAmountX,
-        amount_y: finalAmountY,
-        wide_range: totalBins > 69,
-      },
-      message: "DRY RUN — no transaction sent",
+      position: fakePosition,
+      pool: pool_address,
+      pool_name,
+      strategy: activeStrategy,
+      bins_below: activeBinsBelow,
+      bins_above: activeBinsAbove,
+      amount_sol: finalAmountY,
+      amount_y: finalAmountY,
+      active_bin: activeBin.binId,
+      bin_step: actualBinStep,
+      message: "DRY RUN — paper position tracked, no transaction sent",
     };
   }
 
@@ -1163,6 +1191,78 @@ async function fetchRawOpenPositionsFromMeridian({ walletAddress, agentId }) {
   };
 }
 
+// ─── DRY_RUN Paper Positions ───────────────────────────────────
+async function buildDryRunPositions(walletAddress) {
+  const tracked = getTrackedPositions(true); // open positions only
+  if (!tracked.length) return { wallet: walletAddress, total_positions: 0, positions: [], dry_run: true };
+
+  const positions = [];
+  for (const t of tracked) {
+    try {
+      const pool = await getPool(t.pool).catch(() => null);
+      const activeBin = pool ? await pool.getActiveBin().catch(() => null) : null;
+      const currentBinId = activeBin?.binId ?? null;
+
+      const inRange = currentBinId != null &&
+        t.bin_range?.min != null && t.bin_range?.max != null &&
+        currentBinId >= t.bin_range.min && currentBinId <= t.bin_range.max;
+
+      if (currentBinId != null) {
+        if (inRange) markInRange(t.position);
+        else markOutOfRange(t.position);
+      }
+
+      // Live 24h fee/TVL so the LOW_YIELD rule judges real pool yield, not a placeholder.
+      // null = no data, which the rule correctly skips.
+      let feePerTvl24h = null;
+      try {
+        const { getPoolDetail } = await import("./screening.js");
+        const detail = await getPoolDetail({ pool_address: t.pool, timeframe: "24h" });
+        const ratio = Number(detail?.fee_active_tvl_ratio ?? detail?.fee_tvl_ratio);
+        feePerTvl24h = Number.isFinite(ratio) ? ratio : null;
+      } catch { /* discovery API miss — leave null */ }
+
+      const refreshed = getTrackedPosition(t.position);
+      const minutesOOR = refreshed?.out_of_range_since
+        ? Math.floor((Date.now() - new Date(refreshed.out_of_range_since).getTime()) / 60000)
+        : 0;
+      const ageMinutes = t.deployed_at
+        ? Math.floor((Date.now() - new Date(t.deployed_at).getTime()) / 60000)
+        : null;
+
+      positions.push({
+        ...refreshed,
+        pair: t.pool_name || t.pool.slice(0, 8),
+        pool: t.pool,
+        position: t.position,
+        strategy: t.strategy,
+        in_range: inRange,
+        out_of_range: !inRange,
+        minutes_out_of_range: minutesOOR,
+        age_minutes: ageMinutes,
+        hours_held: ageMinutes != null ? ageMinutes / 60 : 0,
+        pnl_pct: 0,
+        pnl_usd: 0,
+        total_value_usd: 0,
+        fee_per_tvl_24h: feePerTvl24h,
+        unclaimed_fees_usd: 0,
+        deployed_at: t.deployed_at,
+        amount_sol: t.amount_sol,
+        bin_step: t.bin_step,
+        lower_bin: t.bin_range?.min,
+        upper_bin: t.bin_range?.max,
+        active_bin: currentBinId,
+        volatility: t.volatility,
+        base_mint: null,
+        dry_run: true,
+      });
+    } catch (e) {
+      log("dry_run_warn", `Paper position ${t.position}: ${e.message}`);
+    }
+  }
+  return { wallet: walletAddress, total_positions: positions.length, positions, dry_run: true };
+}
+
 // ─── Get My Positions ──────────────────────────────────────────
 export async function getMyPositions({ force = false, silent = false, wallet_address = null } = {}) {
   let walletOverride = null;
@@ -1183,6 +1283,13 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
     walletAddress = walletOverride || getWallet().publicKey.toString();
   } catch {
     return { wallet: null, total_positions: 0, positions: [], error: "Wallet not configured" };
+  }
+
+  // In DRY_RUN mode, no on-chain positions exist — synthesise from state.json with live bin data.
+  if (process.env.DRY_RUN === "true") {
+    const result = await buildDryRunPositions(walletAddress);
+    if (useLocalWallet) { _positionsCache = result; _positionsCacheAt = Date.now(); }
+    return result;
   }
 
   const loadPositions = async () => { try {
@@ -1517,7 +1624,49 @@ export async function claimFees({ position_address }) {
 export async function closePosition({ position_address, reason }) {
   position_address = normalizeMint(position_address);
   if (process.env.DRY_RUN === "true") {
-    return { dry_run: true, would_close: position_address, message: "DRY RUN — no transaction sent" };
+    const tracked = getTrackedPosition(position_address);
+    const closeReason = reason || "agent decision";
+    recordClose(position_address, closeReason);
+    if (tracked) {
+      const deployedAt = new Date(tracked.deployed_at).getTime();
+      const minutesHeld = Math.floor((Date.now() - deployedAt) / 60000);
+      const minutesOOR = tracked.out_of_range_since
+        ? Math.floor((Date.now() - new Date(tracked.out_of_range_since).getTime()) / 60000)
+        : 0;
+      await recordPerformance({
+        position: position_address,
+        pool: tracked.pool,
+        pool_name: tracked.pool_name || tracked.pool.slice(0, 8),
+        base_mint: null,
+        strategy: tracked.strategy,
+        bin_range: tracked.bin_range,
+        bin_step: tracked.bin_step || null,
+        volatility: tracked.volatility ?? null,
+        fee_tvl_ratio: tracked.fee_tvl_ratio || null,
+        organic_score: tracked.organic_score || null,
+        amount_sol: tracked.amount_sol,
+        fees_earned_usd: 0,
+        final_value_usd: 0,
+        initial_value_usd: 0,
+        minutes_in_range: minutesHeld - minutesOOR,
+        minutes_held: minutesHeld,
+        close_reason: closeReason,
+        signal_snapshot: tracked.signal_snapshot || null,
+        entry_mcap: tracked.entry_mcap ?? null,
+        entry_tvl: tracked.entry_tvl ?? null,
+        entry_volume: tracked.entry_volume ?? null,
+        entry_holders: tracked.entry_holders ?? null,
+      });
+    }
+    log("dry_run", `Paper position closed: ${position_address} (${closeReason})`);
+    return {
+      success: true,
+      dry_run: true,
+      position: position_address,
+      pool: tracked?.pool || null,
+      pool_name: tracked?.pool_name || null,
+      message: `DRY RUN — paper position closed (${closeReason})`,
+    };
   }
 
   const tracked = getTrackedPosition(position_address);
