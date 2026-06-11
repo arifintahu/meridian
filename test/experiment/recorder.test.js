@@ -82,4 +82,34 @@ describe('ExperimentRecorder', () => {
     assert.equal(row.fees_earned_usd, 0.2);
     db.close();
   });
+
+  it('recordSnapshot uses unclaimed_fees_usd when total_fees_claimed_usd is absent (dry-run case)', () => {
+    initRecorder(db, expId);
+    getRecorder().recordSnapshot('pool-dry', {
+      position: 'pos-dry',
+      pnl_pct: 2.5,
+      out_of_range_since: null,
+      unclaimed_fees_usd: 0.35,
+      // total_fees_claimed_usd absent — recordClaim is never called in dry-run
+    });
+    const row = db.prepare('SELECT * FROM position_snapshots WHERE position = ?').get('pos-dry');
+    assert.ok(row);
+    assert.equal(row.fees_earned_usd, 0.35);
+    db.close();
+  });
+
+  it('recordSnapshot sums claimed + unclaimed fees (live position with prior claims)', () => {
+    initRecorder(db, expId);
+    getRecorder().recordSnapshot('pool-live', {
+      position: 'pos-live',
+      pnl_pct: 0.8,
+      out_of_range_since: null,
+      unclaimed_fees_usd: 0.05,
+      total_fees_claimed_usd: 0.10,
+    });
+    const row = db.prepare('SELECT * FROM position_snapshots WHERE position = ?').get('pos-live');
+    assert.ok(row);
+    assert.ok(Math.abs(row.fees_earned_usd - 0.15) < 1e-9, `expected ~0.15, got ${row.fees_earned_usd}`);
+    db.close();
+  });
 });

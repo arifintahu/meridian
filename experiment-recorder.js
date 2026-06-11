@@ -60,7 +60,7 @@ class ExperimentRecorder {
       insertSnapshot(this._db, this._experimentId, positionData.position, {
         pnl_pct:         positionData.pnl_pct ?? null,
         in_range:        !positionData.out_of_range_since,
-        fees_earned_usd: positionData.total_fees_claimed_usd ?? 0,
+        fees_earned_usd: (positionData.unclaimed_fees_usd ?? 0) + (positionData.total_fees_claimed_usd ?? 0),
       });
     } catch (err) {
       console.error('[recorder] recordSnapshot error:', err.message);
