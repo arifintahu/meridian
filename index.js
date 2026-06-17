@@ -719,11 +719,15 @@ export function startCronJobs() {
     _managementBusy = true;
     log("cron", "Starting health check");
     try {
-      await agentLoop(`
-HEALTH CHECK
-
-Summarize the current portfolio health, total fees earned, and performance of all open positions. Recommend any high-level adjustments if needed.
-      `, config.llm.maxSteps, [], "MANAGER");
+      const snap = await getMyPositions({ force: true }).catch(() => null);
+      const positions = snap?.positions || [];
+      const totals = {
+        value_usd: positions.reduce((s, p) => s + (p.total_value_usd ?? 0), 0),
+        unclaimed_usd: positions.reduce((s, p) => s + (p.unclaimed_fees_usd ?? 0), 0),
+      };
+      const summary = buildHealthSummary({ positions, totals });
+      log("health", summary);
+      if (telegramEnabled()) await sendMessage(summary).catch(() => {});
     } catch (error) {
       log("cron_error", `Health check failed: ${error.message}`);
     } finally {
