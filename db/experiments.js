@@ -37,6 +37,8 @@ export function createOrResumeExperiment(db, { label, notes = null, configSnapsh
  */
 export function endExperiment(db, id) {
   db.prepare('UPDATE experiments SET ended_at = ? WHERE id = ?').run(Date.now(), id);
+  const updated = db.prepare('SELECT * FROM experiments WHERE id = ?').get(id);
+  if (updated) insertOutbox(db, 'experiments', id, updated);
 }
 
 /**
