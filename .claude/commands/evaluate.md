@@ -1,5 +1,5 @@
 ---
-description: Evaluate a dry-run experiment — queries SQLite DB, analyses results, recommends config changes
+description: Evaluate a dry-run experiment — queries SQLite DB, analyses results, recommends config changes, then applies + commits the approved change to the tracked user-config.json
 ---
 
 Evaluate dry-run experiment results and recommend config changes.
@@ -89,14 +89,30 @@ Suggest specific `user-config.json` key changes based on evidence. Show as a dif
 ```
 Only recommend changes with clear evidence. Warn if fewer than 5 closed positions.
 
-### 4. Apply config changes (optional)
+### 4. Apply and commit the recommendation
 
-If the user wants to apply recommendations:
-1. Read current `user-config.json`
-2. Show exact diff of what will change
-3. Wait for explicit confirmation before editing
+`user-config.json` is git-tracked and the daemon no longer auto-evolves it, so
+`/evaluate` is the deliberate path for config changes. Apply, then commit, so the
+change is versioned and deploys via `git pull` on the runner.
+
+If the user approves a recommendation:
+1. Read current `user-config.json`.
+2. Show the exact diff (old → new for each key).
+3. Wait for explicit confirmation.
+4. Edit `user-config.json` with the approved values.
+5. Verify it still parses: `node -e "JSON.parse(require('fs').readFileSync('user-config.json','utf8'));console.log('valid')"`.
+6. Commit it so the change is tracked and deployable:
+   ```bash
+   git add user-config.json
+   git commit -m "tune: <changed-keys> from <experiment-label> evaluation"
+   ```
+7. Confirm what was committed and that the runner can pick it up with `git pull`.
 
 ## Guardrails
-- Never apply config changes without explicit user confirmation
-- Never edit `.env` files
-- Warn clearly if fewer than 5 closed positions
+- Never apply config changes without explicit user confirmation.
+- Config changes go through git: tune here, commit, `git pull` on the runner —
+  never hand-edit `user-config.json` on the deploy box (it would diverge).
+- Only commit `user-config.json` — never stage `.env`, `state.json`, or other
+  runtime/secret files in the same commit.
+- Never edit `.env` files.
+- Warn clearly if fewer than 5 closed positions.
