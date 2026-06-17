@@ -1,49 +1,30 @@
 ---
-description: Review all open positions and take management actions
+description: Run one deterministic management cycle (evaluate positions, claim/close)
 ---
-Run a full management cycle:
+Run a single deterministic management cycle — the same rules the autopilot applies. It snapshots every open position, applies the fixed exit rules in priority order, and claims/closes accordingly.
 
-1. Check all positions — run via Bash:
+Use the Bash tool, sequentially (never background, never parallel).
+
+**1. (Optional) Inspect positions first**
 ```
 node cli.js positions
 ```
 
-2. For each position, get PnL — the output now includes `strategy` and `instruction` from state:
+**2. Run the cycle**
 ```
-node cli.js pnl ADDRESS
+node cli.js manage --dry-run     # inspect, no on-chain transaction
+node cli.js manage               # live
 ```
-Replace ADDRESS with the position address string from step 1.
 
-3. Note the `strategy` field from the pnl output. Apply **strategy-specific** management rules:
+**3. Report**
 
-**`custom_ratio_spot` (default):**
-- OOR upside + profitable (PnL > 10%) → close immediately to lock gains
-- OOR downside > 10 min, no volume recovery → close
-- In range, fees > $5 → claim
-- In range, total return >= 10% → close and take profit
+Summarize per position what the cycle did (STAY / CLAIM / CLOSE) and why. The exit rules, in priority order:
+1. **Stop-loss** — `pnl_pct <= stopLossPct` (default `-50`)
+2. **Take-profit** — `pnl_pct >= takeProfitPct` (default `5`)
+3. **Pumped far above range** — active bin far above the upper bin
+4. **Out-of-range timeout** — OOR ≥ `outOfRangeWaitMinutes` (default `30`)
+5. **Low yield** — `fee/TVL 24h < minFeePerTvl24h` (default `7`) after `minAgeBeforeYieldCheck` (default `60m`)
 
-**`fee_compounding`:**
-- In range, unclaimed fees > $5 → `node cli.js claim-fees --position <addr> --pool <pool>` then `node cli.js add-liquidity --position <addr> --pool <pool> --amount-y <claimed_sol>` to re-add fees back
-- OOR → close normally
+Plus **trailing take-profit** (a 30s poller arms at `trailingTriggerPct` and closes on a `trailingDropPct` drop from peak), fee **claim** when unclaimed ≥ `minClaimAmount`, and any free-text **position note** condition (parsed in code).
 
-**`single_sided_reseed`:**
-- OOR downside + token still has volume → do NOT close. Instead: `node cli.js withdraw-liquidity --position <addr> --pool <pool> --bps 10000 --no-claim` then `node cli.js add-liquidity --position <addr> --pool <pool> --amount-x <token_bal> --strategy bid_ask` to re-seed at new price
-- OOR + no volume / token dead → close normally
-
-**`partial_harvest`:**
-- In range, total return (fees + PnL) >= 10% of deployed capital → `node cli.js withdraw-liquidity --position <addr> --pool <pool> --bps 5000` to pull 50% off, then swap harvested tokens to SOL. Let remaining 50% keep running.
-- OOR → close normally
-
-**`multi_layer`:**
-- Manage each sub-position independently using custom_ratio_spot rules above
-
-4. **Instruction override (highest priority):** If `instruction` is set (e.g. "close at 5% profit"), check it first and execute if the condition is met.
-
-**Global close rules (override strategy defaults when data is clear):**
-- OOR upside + PnL > 10% → close IMMEDIATELY regardless of strategy
-- PnL < -25% with no volume recovery → close
-- Position age > 2h and OOR downside with no recovery → close
-
-Execute any actions with the appropriate CLI commands. Explain each decision.
-
-**Important:** Run all commands sequentially via Bash, never in background. Wait for each command to complete before running the next. Do not use background tasks or parallel execution.
+> All thresholds live in `user-config.json`. Change behavior there (use `/evaluate`) — don't close positions manually against the rules.

@@ -7,7 +7,7 @@ Evaluate dry-run experiment results and recommend config changes.
 ## Usage
 
 ```
-/eval [experiment-label-or-id]
+/evaluate [experiment-label-or-id]
 ```
 
 - No args → list recent experiments, ask which to evaluate
