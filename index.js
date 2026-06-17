@@ -4,6 +4,8 @@ import readline from "readline";
 import path from "path";
 import { fileURLToPath } from "url";
 import { agentLoop } from "./agent.js";
+import { parseInstruction, evaluateInstruction } from "./instruction-parser.js";
+import { buildDeployReport, buildHealthSummary } from "./reports.js";
 import { log } from "./logger.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
