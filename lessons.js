@@ -186,16 +186,9 @@ export async function recordPerformance(perf) {
     });
   }
 
-  // Evolve thresholds every 5 closed positions
-  if (data.performance.length % MIN_EVOLVE_POSITIONS === 0) {
-    const { config, reloadScreeningThresholds } = await import("./config.js");
-    const result = evolveThresholds(data.performance, config);
-    if (result?.changes && Object.keys(result.changes).length > 0) {
-      reloadScreeningThresholds();
-      log("evolve", `Auto-evolved thresholds: ${JSON.stringify(result.changes)}`);
-    }
-
-  }
+  // Auto-evolve disabled: config changes are deliberate only (via /evaluate +
+  // commit, or the manual /evolve command). Keeps the git-tracked
+  // user-config.json from being rewritten at runtime on a deploy box.
 
   void pushHivePerformanceEvent({
     ...entry,
