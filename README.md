@@ -243,23 +243,25 @@ claude
 | `/manage` | Deterministic management cycle — checks all positions, evaluates PnL, claims fees, closes OOR/losing positions |
 | `/balance` | Check wallet SOL and token balances |
 | `/positions` | List all open DLMM positions with range status |
-| `/candidates` | Fetch and enrich top pool candidates (pool metrics + token audit + smart money) |
+| `/candidates` | Fetch and analyse top pool candidates against the deterministic screening thresholds |
 | `/study-pool` | Study top LPers on a specific pool |
 | `/pool-ohlcv` | Fetch price/volume history for a pool |
 | `/pool-compare` | Compare all Meteora DLMM pools for a token pair by APR, fee/TVL ratio, and volume |
 
 #### Claude Code agents
 
-Two specialized sub-agents run inside Claude Code:
+Two read-only analyst sub-agents run inside Claude Code. The deploy/close decisions themselves are deterministic and live in code — the agents surface data, explain what the rules will do, and run the deterministic cycle when asked. They do not apply their own thresholds.
 
-**`screener`** — pool screening specialist. Invoke when you want to evaluate candidates, analyse token risk, or deploy a position. Has access to Jupiter token audit, smart-wallet checks, and all strategy logic.
+**`screener`** — pool screening analyst. Inspect candidates and token risk, explain what the deterministic screener would pick, and run a screening cycle.
 
-**`manager`** — position management specialist. Invoke when reviewing open positions, assessing PnL, claiming fees, or closing positions.
+**`manager`** — position management analyst. Review open positions and PnL, explain the deterministic exit rules, and run a management cycle.
+
+A third agent, **`meridian-experiment-runner`**, drives the dry-run experiment workflow (start a labelled DRY_RUN, monitor closes, hand off to `/evaluate`).
 
 To trigger an agent directly, just describe what you want:
 ```
-> screen for new pools and deploy if you find something good
-> review all my positions and close anything out of range
+> run a screening cycle and tell me what it deployed and why
+> review my positions and run a management cycle
 > what do you think of the SOL/BONK pool?
 ```
 
