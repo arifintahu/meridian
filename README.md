@@ -1,38 +1,40 @@
 # Meridian
 
-**Autonomous Meteora DLMM liquidity management agent for Solana, powered by LLMs.**
+**Autonomous, deterministic Meteora DLMM liquidity management agent for Solana — no LLM at runtime.**
 
 **Links:** [Website](https://agentmeridian.xyz) | [Telegram](https://t.me/agentmeridian) | [X](https://x.com/meridian_agent)
 
-Meridian runs continuous screening and management cycles, deploying capital into high-quality Meteora DLMM pools and closing positions based on live PnL, yield, and range data. It learns from every position it closes.
+Meridian runs continuous screening and management cycles, deploying capital into high-quality Meteora DLMM pools and closing positions based on live PnL, yield, and range data. Every decision is made by deterministic rules in code — no LLM in the loop — so runs are reproducible and you tune behavior by changing config, not prompts. You discover good parameters by running dry-run experiments and evaluating the results.
 
 ---
 
 ## What it does
 
-- **Screens pools** — scans Meteora DLMM pools against configurable thresholds (fee/TVL ratio, organic score, holder count, mcap, bin step) and surfaces high-quality opportunities
-- **Manages positions** — monitors, claims fees, and closes LP positions autonomously; decides to STAY, CLOSE, or REDEPLOY based on live data
-- **Learns from performance** — studies top LPers in target pools, saves structured lessons, and evolves screening thresholds based on closed position history
+- **Screens pools** — scans Meteora DLMM pools against configurable thresholds (fee/TVL ratio, organic score, holder count, mcap, bin step), then deploys into the top-scored survivor — all in code, no model call
+- **Manages positions** — monitors, claims fees, and closes LP positions autonomously via fixed rules (stop-loss, take-profit, out-of-range, low-yield, trailing TP)
+- **Records performance** — logs every closed position and derives lessons; you tune thresholds deliberately from the evidence (see the experiment workflow below) rather than letting the agent drift
+- **Reproducible experiments** — dry-run mode records every deploy/close to a local SQLite DB so you can compare config variants without LLM nondeterminism muddying the results
 - **Discord signals** — optional Discord listener watches LP Army channels for Solana token calls and queues them for screening
-- **Telegram chat** — full agent chat via Telegram, plus cycle reports and OOR alerts
-- **Claude Code integration** — run AI-powered screening and management directly from your terminal using Claude Code slash commands
+- **Telegram notifications** — cycle reports, deploy/close/OOR alerts, and a few control commands (`/positions`, `/close`, `/set`)
+- **Claude Code integration** — run deterministic screening/management and evaluate experiment results from your terminal using Claude Code slash commands
 
 ---
 
 ## How it works
 
-Meridian runs a **ReAct agent loop** — each cycle the LLM reasons over live data, calls tools, and acts. Two specialized agents run on independent cron schedules:
+Meridian runs two deterministic cycles on independent cron schedules. There is no model in the loop — each cycle reads live data and applies fixed rules in code:
 
-| Agent | Default interval | Role |
+| Cycle | Default interval | What it does |
 |---|---|---|
-| **Screening Agent** | Every 30 min | Pool screening — finds and deploys into the best candidate |
-| **Management Agent** | Every 10 min | Position management — evaluates each open position and acts |
+| **Screening** | Every 30 min | Hard-filters Meteora pools (TVL, fee/TVL, organic, holders, bin step, cooldowns, PVP), scores the survivors, and deploys into the top-scored one |
+| **Management** | Every 10 min | Evaluates each open position against fixed exit rules and claims/closes accordingly |
 
-### Agent harness
+### Decision rules
 
-Meridian's agent harness is the runtime wrapper around every autonomous cycle. It gives both **main** and **experimental** agents the same control loop: load live state, inject relevant memory, expose only role-appropriate tools, execute tool calls, and return a readable cycle report.
+- **Screening** filters every candidate, then deploys the highest-scored survivor (`fee/TVL × 1000 + organic × 10 + volume/100 + holders/100`). If only one weak candidate survives, a lone-candidate skip can veto it.
+- **Management** applies, in order: stop-loss, take-profit, pumped-far-above-range, out-of-range-timeout, and low-yield. A 30-second PnL poller handles trailing-take-profit between cycles. Free-text position notes (e.g. "close if pnl > 10%") are parsed and evaluated in code.
 
-The harness also keeps a structured decision log in `decision-log.json` for deployments, closes, skips, and no-deploy outcomes. Each entry records the actor, pool or position, summary, reason, key risks, metrics, and rejected alternatives. Recent decisions are injected back into the system prompt and are available through `get_recent_decisions`, so the agent can answer "why did you deploy?", "why did you close?", or "why did you skip?" without guessing after the fact.
+Every deploy, close, skip, and no-deploy is written to a structured decision log (`decision-log.json`) with the actor, pool/position, reason, risks, metrics, and rejected alternatives — and to a SQLite experiment DB in dry-run mode.
 
 **Data sources:**
 - `@meteora-ag/dlmm` SDK — on-chain position data, active bin, deploy/close transactions
@@ -40,18 +42,32 @@ The harness also keeps a structured decision log in `decision-log.json` for depl
 - Pool screening API — fee/TVL ratios, volume, organic scores, holder counts
 - Jupiter API — token audit, mcap, launchpad, price stats
 
-Agents are powered via **OpenRouter** and can be swapped for any compatible model.
+> **No API key for an LLM provider is required.** Meridian made the entire loop deterministic; the old ReAct/LLM harness has been removed.
+
+---
+
+## Experiment & tuning workflow
+
+Because the daemon is deterministic, the same config + same market data produces the same decisions — which makes parameter tuning a clean, evidence-driven loop:
+
+1. **Run a dry-run experiment** — `npm run dev` records every deploy/close to a local SQLite DB (`experiment.sqlite`), tagged with the active `user-config.json` snapshot.
+2. **Evaluate** — in Claude Code, run `/evaluate`. It analyses the experiment (win rate, PnL, exit-reason breakdown, signal correlations) and recommends specific `user-config.json` changes backed by the data.
+3. **Apply + commit** — on your approval, `/evaluate` edits `user-config.json` and commits it. The file is **git-tracked** for exactly this reason.
+4. **Deploy** — on the runner, `git pull` picks up the new config.
+
+`user-config.json` is versioned config you change deliberately. The daemon never rewrites it at runtime (auto-evolution is off), so the tracked file stays clean between pulls. Keep all secrets in `.env` (gitignored) — never in `user-config.json`.
 
 ---
 
 ## Requirements
 
 - Node.js 18+
-- [OpenRouter](https://openrouter.ai) API key
 - Solana wallet (base58 private key)
 - Solana RPC endpoint ([Helius](https://helius.xyz) recommended)
-- Telegram bot token (optional)
-- [Claude Code](https://claude.ai/code) CLI (optional, for terminal slash commands)
+- Telegram bot token (optional, for notifications)
+- [Claude Code](https://claude.ai/code) CLI (optional, for terminal slash commands + `/evaluate`)
+
+> No LLM provider key is needed — the agent runs entirely on deterministic rules.
 
 ---
 
@@ -75,9 +91,9 @@ The wizard writes **both** files at the repo root:
 
 | Goes in `.env` | Goes in `user-config.json` |
 |---|---|
-| `WALLET_PRIVATE_KEY`, `OPENROUTER_API_KEY`, `RPC_URL`, `HELIUS_API_KEY` | Risk preset, deploy size, max positions |
+| `WALLET_PRIVATE_KEY`, `RPC_URL`, `HELIUS_API_KEY` | Risk preset, deploy size, max positions |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ALLOWED_USER_IDS` | Strategy, screening filters, exit rules, trailing TP |
-| `DRY_RUN` | Position sizing, cycle intervals, per-role LLM models, `solMode` |
+| `DRY_RUN` | Position sizing, cycle intervals, `solMode` |
 
 `TELEGRAM_CHAT_ID` only needs to live in `.env` — setup also copies it to `user-config.json` when provided. Takes about 2 minutes.
 
@@ -88,14 +104,13 @@ Create `.env`:
 ```env
 WALLET_PRIVATE_KEY=your_base58_private_key
 RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
-OPENROUTER_API_KEY=sk-or-...
 HELIUS_API_KEY=your_helius_key          # for wallet balance lookups
-TELEGRAM_BOT_TOKEN=123456:ABC...        # optional — for notifications + chat
+TELEGRAM_BOT_TOKEN=123456:ABC...        # optional — for notifications
 TELEGRAM_CHAT_ID=                       # auto-filled on first message
 DRY_RUN=true                            # set false for live trading
 ```
 
-> Never put your private key or API keys in `user-config.json` — use `.env` only. Both files are gitignored.
+> **Secrets live in `.env` only — never in `user-config.json`.** `.env` is gitignored; `user-config.json` is **git-tracked** (it holds non-secret tuning config you version and deploy).
 
 Optional encrypted `.env` flow:
 
@@ -107,13 +122,7 @@ npm run env:encrypt
 
 Meridian loads envrypt-style encrypted values automatically. Keep `.env.raw` and `.envrypt` local; both are gitignored.
 
-Copy config and edit as needed:
-
-```bash
-cp user-config.example.json user-config.json
-```
-
-See [Config reference](#config-reference) below.
+`user-config.json` is tracked in the repo, so a clone already has it — edit it directly. `user-config.example.json` documents every available field. See [Config reference](#config-reference) below.
 
 ### 3. Run
 
@@ -206,12 +215,13 @@ REPL commands:
 |---|---|
 | `/status` | Wallet balance and open positions |
 | `/candidates` | Re-screen and display top pool candidates |
-| `/learn` | Study top LPers across all current candidate pools |
-| `/learn <pool_address>` | Study top LPers for a specific pool |
+| `1` / `2` / `3` … | Deploy into that candidate (deterministic) |
+| `auto` | Run a deterministic screen + deploy |
 | `/thresholds` | Current screening thresholds and performance stats |
-| `/evolve` | Trigger threshold evolution from performance data (needs 5+ closed positions) |
+| `/evolve` | Manually adjust thresholds from performance data (needs 5+ closed positions) |
 | `/stop` | Graceful shutdown |
-| `<anything>` | Free-form chat — ask the agent anything, request actions, analyze pools |
+
+> The REPL is command-only. Free-form chat has been removed along with the LLM loop.
 
 ---
 
@@ -228,8 +238,9 @@ claude
 
 | Command | What it does |
 |---|---|
-| `/screen` | Full AI screening cycle — checks Discord queue, reads config, fetches candidates, runs deep research, and deploys if a winner is found |
-| `/manage` | Full AI management cycle — checks all positions, evaluates PnL, claims fees, closes OOR/losing positions |
+| `/evaluate` | Analyse a dry-run experiment and recommend + commit `user-config.json` tuning changes |
+| `/screen` | Deterministic screening cycle — checks Discord queue, reads config, fetches candidates, and deploys the top survivor |
+| `/manage` | Deterministic management cycle — checks all positions, evaluates PnL, claims fees, closes OOR/losing positions |
 | `/balance` | Check wallet SOL and token balances |
 | `/positions` | List all open DLMM positions with range status |
 | `/candidates` | Fetch and enrich top pool candidates (pool metrics + token audit + smart money) |
@@ -318,8 +329,8 @@ meridian withdraw-liquidity --position <addr> --pool <addr> [--bps 10000]
 **Agent cycles**
 
 ```bash
-meridian screen [--dry-run] [--silent]   # one AI screening cycle
-meridian manage [--dry-run] [--silent]   # one AI management cycle
+meridian screen [--dry-run] [--silent]   # one deterministic screening cycle
+meridian manage [--dry-run] [--silent]   # one deterministic management cycle
 meridian start [--dry-run]               # start autonomous agent with cron jobs
 ```
 
@@ -446,7 +457,7 @@ Meridian does **not** auto-register the first chat for safety — you must set `
 ### Notifications
 
 Meridian sends notifications automatically for:
-- Management cycle reports (reasoning + decisions)
+- Management cycle reports (rule-based decisions + results)
 - Screening cycle reports (what it found, whether it deployed)
 - OOR alerts when a position leaves range past `outOfRangeWaitMinutes`
 - Deploy: pair, amount, position address, tx hash
@@ -460,7 +471,7 @@ Meridian sends notifications automatically for:
 | `/close <n>` | Close position by list index |
 | `/set <n> <note>` | Set a note on a position |
 
-You can also chat freely via Telegram using the same interface as the REPL. Only allowed user IDs can issue commands in groups.
+Telegram is for notifications and these control commands only — there is no free-form chat. Only allowed user IDs can issue commands in groups.
 
 ---
 
@@ -499,7 +510,7 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 | `gasReserve` | `0.2` | Minimum SOL to keep for gas |
 | `minSolToOpen` | `0.55` | Minimum wallet SOL before opening |
 | `outOfRangeWaitMinutes` | `30` | Minutes OOR before acting |
-| `stopLossPct` | `-15` | Close position if price drops by this % |
+| `stopLossPct` | `-50` | Close position if PnL drops by this % |
 | `takeProfitPct` | `5` | Close when fees earned reach this % of capital |
 | `trailingTakeProfit` | `true` | Enable trailing take-profit |
 | `trailingTriggerPct` | `3` | Activate trailing TP at this PnL % |
@@ -513,37 +524,34 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 | `managementIntervalMin` | `10` | Management cycle frequency (minutes) |
 | `screeningIntervalMin` | `30` | Screening cycle frequency (minutes) |
 
-### Models
+### Signal staging
 
 | Field | Default | Description |
 |---|---|---|
-| `managementModel` | `openai/gpt-oss-20b:free` | LLM for management cycles |
-| `screeningModel` | `openai/gpt-oss-20b:free` | LLM for screening cycles |
-| `generalModel` | `openai/gpt-oss-20b:free` | LLM for REPL / chat |
-
-> Override model at runtime: `node cli.js config set screeningModel anthropic/claude-opus-4-5`
+| `signalStagingEnabled` | `true` | Capture entry-time signals (fee/TVL, organic, volatility, …) into each position's record for experiment analysis. Recorded, never acted on. |
 
 ---
 
-## How it learns
+## Performance & tuning
 
-### Lessons
+### Performance log & lessons
 
-After every closed position the agent runs `studyTopLPers` on candidate pools, analyzes on-chain behavior of top performers (hold duration, entry/exit timing, win rates), and saves concrete lessons. Lessons are injected into subsequent agent cycles as part of the system context.
+Every closed position is recorded with its full context (entry signals, PnL, fees, range efficiency, hold time, close reason) in `lessons.json` and — in dry-run — the experiment SQLite DB. From each close the agent derives a structured lesson (PREFER / AVOID / WORKED / FAILED).
 
 Add a lesson manually:
 ```bash
 node cli.js lessons add "Never deploy into pump.fun tokens under 2h old"
 ```
 
-### Threshold evolution
+### Tuning thresholds
 
-After 5+ positions have been closed, run:
+The recommended path is the [experiment workflow](#experiment--tuning-workflow): run a dry-run, then `/evaluate` in Claude Code to get evidence-backed `user-config.json` changes and commit them.
+
+Auto-evolution is **disabled** — the daemon never rewrites your tracked config on its own. For a quick manual pass over closed-position performance you can still run:
 ```bash
-node cli.js evolve
+node cli.js evolve     # needs 5+ closed positions
 ```
-
-This analyzes closed position performance (win rate, avg PnL, fee yields) and automatically adjusts screening thresholds in `user-config.json`. Changes take effect immediately.
+This adjusts `minOrganic` / `minFeeActiveTvlRatio` in `user-config.json` from win-rate and yield data. Review the diff and commit it.
 
 ---
 
@@ -554,7 +562,7 @@ HiveMind sync uses Agent Meridian at `https://api.agentmeridian.xyz` by default 
 **What you get:**
 - Shared lessons from other Meridian agents
 - Strategy presets and crowd performance context
-- Role-aware lessons injected into future screener/manager prompts when `hiveMindPullMode` is `auto`
+- Role-aware shared lessons available to future cycles when `hiveMindPullMode` is `auto`
 
 **What you share:**
 - Lessons from `lessons.json`
@@ -589,55 +597,48 @@ There is currently no empty-string disable path for HiveMind; blank values fall 
 
 ---
 
-## Using a local model (LM Studio)
-
-```env
-LLM_BASE_URL=http://localhost:1234/v1
-LLM_API_KEY=lm-studio
-LLM_MODEL=your-local-model-name
-```
-
-Any OpenAI-compatible endpoint works.
-
----
-
 ## Architecture
 
 ```
-index.js            Main entry: REPL + cron orchestration + Telegram bot polling
-agent.js            ReAct loop: LLM → tool call → repeat
-config.js           Runtime config from user-config.json + .env (repo-root paths)
-repo-root.js        Stable absolute repo path — used by PM2, state files, and .env loading
-prompt.js           System prompt builder (SCREENER / MANAGER / GENERAL roles)
-state.js            Position registry (state.json)
-decision-log.js     Structured decision log for deploy, close, skip, and no-deploy rationale
-lessons.js          Learning engine: records performance, derives lessons, evolves thresholds
-pool-memory.js      Per-pool deploy history + snapshots
-strategy-library.js Saved LP strategies
-telegram.js         Telegram bot: polling + notifications
-hivemind.js         Agent Meridian HiveMind sync
-smart-wallets.js    KOL/alpha wallet tracker
-token-blacklist.js  Permanent token blacklist
-cli.js              Direct CLI — every tool as a subcommand with JSON output
+index.js              Main entry: REPL + deterministic cron cycles + Telegram polling
+config.js             Runtime config from user-config.json + .env (repo-root paths)
+repo-root.js          Stable absolute repo path — used by PM2, state files, and .env loading
+instruction-parser.js Parses free-text position notes into close conditions (no LLM)
+reports.js            Code-built deploy + health report strings
+state.js              Position registry (state.json)
+decision-log.js       Structured decision log for deploy, close, skip, and no-deploy rationale
+lessons.js            Performance log + derived lessons + manual threshold evolution
+pool-memory.js        Per-pool deploy history, cooldowns, and snapshots
+signal-tracker.js     Stages entry-time signals into the position record
+strategy-library.js   Saved LP strategy definitions
+experiment-recorder.js Records deploys/closes/snapshots to the experiment SQLite DB
+telegram.js           Telegram bot: polling + notifications
+hivemind.js           Agent Meridian HiveMind sync
+smart-wallets.js      KOL/alpha wallet tracker
+token-blacklist.js    Permanent token blacklist
+cli.js                Direct CLI — every tool as a subcommand with JSON output
 
 tools/
-  definitions.js    Tool schemas (OpenAI format)
-  executor.js       Tool dispatch + safety checks
-  dlmm.js           Meteora DLMM SDK wrapper
-  screening.js      Pool discovery
-  wallet.js         SOL/token balances + Jupiter swap
-  token.js          Token info, holders, narrative
-  study.js          Top LPer study via LPAgent API
+  definitions.js      Tool schemas
+  executor.js         Tool dispatch + safety checks
+  dlmm.js             Meteora DLMM SDK wrapper
+  screening.js        Pool discovery + scoring + hard filters
+  wallet.js           SOL/token balances + Jupiter swap
+  token.js            Token info, holders, narrative
+  study.js            Top LPer study via LPAgent API
+
+db/                   Experiment SQLite schema, recorders, and Postgres outbox sync
 
 discord-listener/
-  index.js          Selfbot Discord listener
-  pre-checks.js     Signal pre-check pipeline
+  index.js            Selfbot Discord listener
+  pre-checks.js       Signal pre-check pipeline
 
 .claude/
   agents/
     screener.md     Claude Code screener sub-agent
     manager.md      Claude Code manager sub-agent
   commands/
+    evaluate.md     /evaluate — analyse experiment + tune config
     screen.md       /screen slash command
     manage.md       /manage slash command
     balance.md      /balance slash command
