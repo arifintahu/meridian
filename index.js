@@ -613,102 +613,74 @@ export async function runScreeningCycle({ silent = false } = {}) {
       return block;
     });
 
-    const weightsSummary = config.darwin?.enabled ? getWeightsSummary() : null;
+    // ── Deterministic deploy: top-scored survivor ──────────────────────
+    // passing[] preserves getTopCandidates' score-descending order, so
+    // passing[0] is the highest-scored candidate that cleared all filters.
+    const best = passing[0];
+    const bestActiveBin = activeBinResults[0]?.status === "fulfilled" ? activeBinResults[0].value?.binId : null;
+    const binsBelow = computeBinsBelow(best.pool.volatility);
 
     let deployAttempted = false;
     let deploySucceeded = false;
-    const { content } = await agentLoop(`
-SCREENING CYCLE
-${strategyBlock}
-Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL
+    let deployResult = null;
+    try {
+      deployAttempted = true;
+      deployResult = await executeTool("deploy_position", {
+        pool_address: best.pool.pool,
+        amount_y: deployAmount,
+        strategy: deployStrategy,
+        bins_below: binsBelow,
+        bins_above: 0,
+        pool_name: best.pool.name,
+        base_mint: best.pool.base?.mint || best.pool.base_mint || null,
+        bin_step: best.pool.bin_step,
+        base_fee: best.pool.base_fee,
+        volatility: best.pool.volatility,
+        fee_tvl_ratio: best.pool.fee_active_tvl_ratio ?? best.pool.fee_tvl_ratio,
+        organic_score: best.pool.organic_score,
+        initial_value_usd: best.pool.tvl ?? best.pool.active_tvl ?? null,
+      });
+      deploySucceeded = Boolean(deployResult && deployResult.success !== false && !deployResult.error && !deployResult.blocked);
+    } catch (e) {
+      log("cron_error", `Deploy failed: ${e.message}`);
+      deployResult = { error: e.message };
+    }
 
-PRE-LOADED CANDIDATES (${passing.length} pools):
-${candidateBlocks.join("\n\n")}
-
-STEPS:
-1. Decide if any candidate is actually worth deploying. One surviving candidate is not automatically good enough.
-2. Pick the best candidate based on narrative quality, smart wallets, and pool metrics.
-3. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
-   bins_below = round(${config.strategy.minBinsBelow} + (candidate volatility/5)*(${config.strategy.maxBinsBelow - config.strategy.minBinsBelow})) clamped to [${config.strategy.minBinsBelow},${config.strategy.maxBinsBelow}].
-   pass deploy_position.volatility = the candidate volatility value.
-   For single-side SOL deploys, do not invent upside:
-   set amount_y only, keep amount_x = 0, keep bins_above = 0, and let the upper bin stay at the active bin.
-4. Report in this exact format (no tables, no extra sections):
-   🚀 DEPLOYED
-
-   <pool name>
-   <pool address>
-
-   ◎ <deploy amount> SOL | <strategy> | bin <active_bin>
-   Range: <minPrice> → <maxPrice>
-   Range cover: <downside %> downside | <upside %> upside | <total width %> total
-
-   IMPORTANT:
-   - Do NOT calculate the range percentages yourself.
-   - Use the actual deploy_position tool result:
-     range_coverage.downside_pct
-     range_coverage.upside_pct
-     range_coverage.width_pct
-
-   MARKET
-   Fee/TVL: <x>%
-   Volume: $<x>
-   TVL: $<x>
-   Volatility: <x>
-   Organic: <x>
-   Mcap: $<x>
-   Age: <x>h
-
-   AUDIT
-   Top10: <x>%
-   Bots: <x>%
-   Fees paid: <x> SOL
-   Smart wallets: <names or none>
-
-   WHY THIS WON
-   <2-4 concise sentences on why this pool won, key risks, and why it still beat the alternatives>
-5. If no pool qualifies, report in this exact format instead:
-   ⛔ NO DEPLOY
-
-   Cycle finished with no valid entry.
-
-   BEST LOOKING CANDIDATE
-   <name or none>
-
-   WHY SKIPPED
-   <2-4 concise sentences explaining why nothing was good enough>
-
-   REJECTED
-   <short flat list of top candidate names and why they were skipped>
-IMPORTANT:
-- Keep the whole report compact and highly scannable for Telegram.
-      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048, {
-        onToolStart: async ({ name }) => {
-          if (name === "deploy_position") deployAttempted = true;
-          await liveMessage?.toolStart(name);
+    if (deploySucceeded) {
+      screenReport = buildDeployReport({
+        candidate: { ...best.pool, active_bin: bestActiveBin },
+        audit: {
+          top10Pct: best.ti?.audit?.top_holders_pct ?? "?",
+          botPct: best.ti?.audit?.bot_holders_pct ?? "?",
+          feesSol: best.ti?.global_fees_sol ?? "?",
+          smartWallets: best.sw?.in_pool?.map((w) => w.name).join(", ") || "none",
         },
-        onToolFinish: async ({ name, result, success }) => {
-          if (name === "deploy_position") {
-            deployAttempted = true;
-            deploySucceeded = Boolean(success && result?.success !== false && !result?.error && !result?.blocked);
-          }
-          await liveMessage?.toolFinish(name, result, success);
+        deployResult,
+        deployAmount,
+        strategy: deployStrategy,
+      });
+      appendDecision({
+        type: "deploy",
+        actor: "SCREENER",
+        summary: `Deployed ${deployAmount} SOL into ${best.pool.name}`,
+        reason: "Top-scored surviving candidate",
+        pool: best.pool.pool,
+        pool_name: best.pool.name,
+        metrics: {
+          fee_tvl_ratio: best.pool.fee_active_tvl_ratio ?? best.pool.fee_tvl_ratio,
+          organic_score: best.pool.organic_score,
+          volatility: best.pool.volatility,
         },
       });
-    screenReport = content;
-    if (/⛔\s*NO DEPLOY/i.test(content)) {
+    } else {
+      screenReport = `⛔ NO DEPLOY\n\n${best.pool.name}\n\nDeploy did not succeed: ${deployResult?.error || deployResult?.blocked || "unknown"}`;
       appendDecision({
         type: "no_deploy",
         actor: "SCREENER",
-        summary: "LLM chose no deploy",
-        reason: stripThink(content).slice(0, 500),
-      });
-    } else if (!deploySucceeded) {
-      appendDecision({
-        type: "no_deploy",
-        actor: "SCREENER",
-        summary: deployAttempted ? "Deploy attempt did not succeed" : "No successful deploy in screening cycle",
-        reason: stripThink(content).slice(0, 500),
+        summary: deployAttempted ? "Deploy attempt did not succeed" : "No deploy",
+        reason: String(deployResult?.error || deployResult?.blocked || "deploy failed").slice(0, 500),
+        pool: best.pool.pool,
+        pool_name: best.pool.name,
       });
     }
   } catch (error) {
