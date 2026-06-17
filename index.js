@@ -1760,13 +1760,11 @@ if (isMain && isTTY) {
 
   console.log(`
 Commands:
-  1 / 2 / 3 ...  Deploy ${DEPLOY} SOL into that pool
-  auto           Let the agent pick and deploy automatically
+  1 / 2 / 3 ...  Deploy into that pool (deterministic)
+  auto           Run a deterministic screen + deploy
   /status        Refresh wallet + positions
   /candidates    Refresh top pool list
   /briefing      Show morning briefing (last 24h)
-  /learn         Study top LPers from the best current pool and save lessons
-  /learn <addr>  Study top LPers from a specific pool address
   /thresholds    Show current screening thresholds + performance stats
   /evolve        Manually trigger threshold evolution from performance data
   /stop          Shut down
