@@ -855,23 +855,6 @@ The strategy will be available for selection before future deployments.`,
   {
     type: "function",
     function: {
-      name: "set_active_strategy",
-      description: `Set which strategy to use for the next screening/deployment cycle.
-The active strategy's token criteria, entry conditions, range, and exit rules will be applied.
-Call list_strategies first to see available options.`,
-      parameters: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "Strategy ID to activate" }
-        },
-        required: ["id"]
-      }
-    }
-  },
-
-  {
-    type: "function",
-    function: {
       name: "remove_strategy",
       description: "Remove a strategy from the library.",
       parameters: {

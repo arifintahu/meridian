@@ -191,19 +191,6 @@ export function getStrategy({ id }) {
 }
 
 /**
- * Set the active strategy used during screening cycles.
- */
-export function setActiveStrategy({ id }) {
-  if (!id) return { error: "id required" };
-  const db = load();
-  if (!db.strategies[id]) return { error: `Strategy "${id}" not found`, available: Object.keys(db.strategies) };
-  db.active = id;
-  save(db);
-  log("strategy", `Active strategy set to: ${db.strategies[id].name}`);
-  return { active: id, name: db.strategies[id].name };
-}
-
-/**
  * Remove a strategy.
  */
 export function removeStrategy({ id }) {
@@ -218,11 +205,3 @@ export function removeStrategy({ id }) {
   return { removed: true, id, name, new_active: db.active };
 }
 
-/**
- * Get the currently active strategy — used by screening cycle.
- */
-export function getActiveStrategy() {
-  const db = load();
-  if (!db.active || !db.strategies[db.active]) return null;
-  return db.strategies[db.active];
-}
