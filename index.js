@@ -1784,30 +1784,34 @@ Commands:
     if (!isNaN(pick) && pick >= 1 && pick <= latest.length) {
       await runBusy(async () => {
         const pool = latest[pick - 1];
-        console.log(`\nDeploying ${DEPLOY} SOL into ${pool.name}...\n`);
-        const { content: reply } = await agentLoop(
-          `Deploy ${DEPLOY} SOL into pool ${pool.pool} (${pool.name}). Call get_active_bin first then deploy_position. Report result.`,
-          config.llm.maxSteps,
-          [],
-          "SCREENER"
-        );
-        console.log(`\n${reply}\n`);
+        console.log(`\nDeploying into ${pool.name} (deterministic)...\n`);
+        try {
+          const { result, candidate, deployAmount } = await deployLatestCandidate(pick - 1);
+          console.log(buildDeployReport({
+            candidate,
+            deployResult: result,
+            deployAmount,
+            strategy: config.strategy.strategy,
+          }));
+          console.log();
+        } catch (e) {
+          console.log(`\n⛔ ${e.message}\n`);
+        }
         launchCron();
       });
       return;
     }
 
-    // ── auto: agent picks and deploys ───────
+    // ── auto: deterministic screen + deploy ─────
     if (input.toLowerCase() === "auto") {
       await runBusy(async () => {
-        console.log("\nAgent is picking and deploying...\n");
-        const { content: reply } = await agentLoop(
-          `get_top_candidates and deploy only if a candidate is clearly worth it. If there is only one weak candidate, report NO DEPLOY. For a valid deploy, use amount_y=${DEPLOY}, amount_x=0, bins_above=0, and bins_below from positive volatility. Execute now, don't ask.`,
-          config.llm.maxSteps,
-          [],
-          "SCREENER"
-        );
-        console.log(`\n${reply}\n`);
+        console.log("\nScreening and deploying (deterministic)...\n");
+        try {
+          const report = await runScreeningCycle({ silent: true });
+          console.log(`\n${report}\n`);
+        } catch (e) {
+          console.log(`\n⛔ ${e.message}\n`);
+        }
         launchCron();
       });
       return;
@@ -1881,55 +1885,6 @@ Commands:
       return;
     }
 
-    if (input.startsWith("/learn")) {
-      await runBusy(async () => {
-        const parts = input.split(" ");
-        const poolArg = parts[1] || null;
-
-        let poolsToStudy = [];
-
-        if (poolArg) {
-          poolsToStudy = [{ pool: poolArg, name: poolArg }];
-        } else {
-          // Fetch top 10 candidates across all eligible pools
-          console.log("\nFetching top pool candidates to study...\n");
-          const { candidates } = await getTopCandidates({ limit: 10 });
-          if (!candidates.length) {
-            console.log("No eligible pools found to study.\n");
-            return;
-          }
-          poolsToStudy = candidates.map((c) => ({ pool: c.pool, name: c.name }));
-        }
-
-        console.log(`\nStudying top LPers across ${poolsToStudy.length} pools...\n`);
-        for (const p of poolsToStudy) console.log(`  • ${p.name || p.pool}`);
-        console.log();
-
-        const poolList = poolsToStudy
-          .map((p, i) => `${i + 1}. ${p.name} (${p.pool})`)
-          .join("\n");
-
-        const { content: reply } = await agentLoop(
-          `Study top LPers across these ${poolsToStudy.length} pools by calling study_top_lpers for each:
-
-${poolList}
-
-For each pool, call study_top_lpers then move to the next. After studying all pools:
-1. Identify patterns that appear across multiple pools (hold time, scalping vs holding, win rates).
-2. Note pool-specific patterns where behaviour differs significantly.
-3. Derive 4-8 concrete, actionable lessons using add_lesson. Prioritize cross-pool patterns — they're more reliable.
-4. Summarize what you learned.
-
-Focus on: hold duration, entry/exit timing, what win rates look like, whether scalpers or holders dominate.`,
-          config.llm.maxSteps,
-          [],
-          "GENERAL"
-        );
-        console.log(`\n${reply}\n`);
-      });
-      return;
-    }
-
     if (input === "/evolve") {
       await runBusy(async () => {
         const perf = getPerformanceSummary();
@@ -1955,13 +1910,10 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
       return;
     }
 
-    // ── Free-form chat ───────────────────────
-    await runBusy(async () => {
-      log("user", input);
-      const { content } = await agentLoop(input, config.llm.maxSteps, sessionHistory, "GENERAL", config.llm.generalModel, null, { interactive: true });
-      appendHistory(input, content);
-      console.log(`\n${content}\n`);
-    });
+    // ── Free-form chat removed (deterministic daemon) ──
+    console.log("\nNot a recognized command. Free-form LLM chat is disabled.");
+    console.log("Available commands: status, positions, pool <n>, screen, candidates, deploy <n>, close <n>, closeall, set <n> <note>, pause, resume, help.\n");
+    refreshPrompt();
   });
 
   rl.on("close", () => shutdown("stdin closed"));
