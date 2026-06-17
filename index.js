@@ -340,41 +340,46 @@ export async function runManagementCycle({ silent = false } = {}) {
     });
 
     if (actionPositions.length > 0) {
-      log("cron", `Management: ${actionPositions.length} action(s) needed — invoking LLM [model: ${config.llm.managementModel}]`);
-
-      const actionBlocks = actionPositions.map((p) => {
+      log("cron", `Management: ${actionPositions.length} action(s) needed — deterministic dispatch`);
+      const resultLines = [];
+      for (const p of actionPositions) {
         const act = actionMap.get(p.position);
-        return [
-          `POSITION: ${p.pair} (${p.position})`,
-          `  pool: ${p.pool}`,
-          `  action: ${act.action}${act.rule && act.rule !== "exit" ? ` — Rule ${act.rule}: ${act.reason}` : ""}${act.rule === "exit" ? ` — ⚡ Trailing TP: ${act.reason}` : ""}`,
-          `  pnl_pct: ${p.pnl_pct}% | unclaimed_fees: ${cur}${p.unclaimed_fees_usd} | value: ${cur}${p.total_value_usd} | fee_per_tvl_24h: ${p.fee_per_tvl_24h ?? "?"}%`,
-          `  bins: lower=${p.lower_bin} upper=${p.upper_bin} active=${p.active_bin} | oor_minutes: ${p.minutes_out_of_range ?? 0}`,
-          p.instruction ? `  instruction: "${p.instruction}"` : null,
-        ].filter(Boolean).join("\n");
-      }).join("\n\n");
-
-      const { content } = await agentLoop(`
-MANAGEMENT ACTION REQUIRED — ${actionPositions.length} position(s)
-
-${actionBlocks}
-
-RULES:
-- CLOSE: call close_position only — it handles fee claiming internally, do NOT call claim_fees first
-- CLAIM: call claim_fees with position address
-- INSTRUCTION: evaluate the instruction condition. If met → close_position. If not → HOLD, do nothing.
-- ⚡ exit alerts: close immediately, no exceptions
-
-Execute the required actions. Do NOT re-evaluate CLOSE/CLAIM — rules already applied. Just execute.
-After executing, write a brief one-line result per position.
-      `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, 2048, {
-        onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
-        onToolFinish: async ({ name, result, success }) => { await liveMessage?.toolFinish(name, result, success); },
-      });
-
-      mgmtReport += `\n\n${content}`;
+        try {
+          if (act.action === "CLOSE") {
+            await liveMessage?.toolStart("close_position");
+            const r = await executeTool("close_position", { position: p.position });
+            const ok = r && r.success !== false && !r.error;
+            await liveMessage?.toolFinish("close_position", r, ok);
+            resultLines.push(`${p.pair}: ${ok ? "✅ closed" : `❌ close failed (${r?.error || "?"})`} — ${act.reason || act.rule || "exit"}`);
+          } else if (act.action === "CLAIM") {
+            await liveMessage?.toolStart("claim_fees");
+            const r = await executeTool("claim_fees", { position: p.position });
+            const ok = r && r.success !== false && !r.error;
+            await liveMessage?.toolFinish("claim_fees", r, ok);
+            resultLines.push(`${p.pair}: ${ok ? "✅ claimed" : `❌ claim failed (${r?.error || "?"})`}`);
+          } else if (act.action === "INSTRUCTION") {
+            const parsed = parseInstruction(p.instruction);
+            if (!parsed) {
+              log("cron_warn", `Unparseable instruction for ${p.pair}: "${p.instruction}" — holding`);
+              resultLines.push(`${p.pair}: ⏸ HOLD — instruction not understood (no LLM fallback)`);
+            } else if (evaluateInstruction(parsed, p)) {
+              await liveMessage?.toolStart("close_position");
+              const r = await executeTool("close_position", { position: p.position });
+              const ok = r && r.success !== false && !r.error;
+              await liveMessage?.toolFinish("close_position", r, ok);
+              resultLines.push(`${p.pair}: ${ok ? "✅ closed" : `❌ close failed (${r?.error || "?"})`} — instruction met (${parsed.metric} ${parsed.op} ${parsed.value})`);
+            } else {
+              resultLines.push(`${p.pair}: ⏸ HOLD — instruction condition not met`);
+            }
+          }
+        } catch (e) {
+          log("cron_error", `Management dispatch failed for ${p.pair}: ${e.message}`);
+          resultLines.push(`${p.pair}: ❌ error — ${e.message}`);
+        }
+      }
+      mgmtReport += `\n\n${resultLines.join("\n")}`;
     } else {
-      log("cron", "Management: all positions STAY — skipping LLM");
+      log("cron", "Management: all positions STAY — no action");
       await liveMessage?.note("No tool actions needed.");
     }
 
