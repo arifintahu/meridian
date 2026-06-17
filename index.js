@@ -1625,25 +1625,9 @@ async function telegramHandler(msg) {
   }
 
   busy = true;
-  let liveMessage = null;
   try {
-    log("telegram", `Incoming: ${text}`);
-    const hasCloseIntent = /\bclose\b|\bsell\b|\bexit\b|\bwithdraw\b/i.test(text);
-    const isDeployRequest = !hasCloseIntent && /\bdeploy\b|\bopen position\b|\blp into\b|\badd liquidity\b/i.test(text);
-    const agentRole = isDeployRequest ? "SCREENER" : "GENERAL";
-    const agentModel = agentRole === "SCREENER" ? config.llm.screeningModel : config.llm.generalModel;
-    liveMessage = await createLiveMessage("🤖 Live Update", `Request: ${text.slice(0, 240)}`);
-    const { content } = await agentLoop(text, config.llm.maxSteps, sessionHistory, agentRole, agentModel, null, {
-      interactive: true,
-      onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
-      onToolFinish: async ({ name, result, success }) => { await liveMessage?.toolFinish(name, result, success); },
-    });
-    appendHistory(text, content);
-    if (liveMessage) await liveMessage.finalize(stripThink(content));
-    else await sendMessage(stripThink(content));
-  } catch (e) {
-    if (liveMessage) await liveMessage.fail(e.message).catch(() => {});
-    else await sendMessage(`Error: ${e.message}`).catch(() => {});
+    log("telegram", `Incoming non-command (ignored): ${text}`);
+    await sendMessage("Free-form chat is disabled. Use commands: /status /positions /screen /deploy /close /closeall /pause /resume /help").catch(() => {});
   } finally {
     busy = false;
     refreshPrompt();
