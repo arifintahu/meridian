@@ -7,8 +7,8 @@ node_modules/
 !.env.example
 .envrypt
 
-# User config (contains RPC URL, wallet key, API keys)
-user-config.json
+# user-config.json is TRACKED — it holds only non-secret tuning config.
+# Keep all secrets (wallet key, RPC URL, API keys, tokens) in .env only.
 
 # Runtime state (position tracking, lessons — user-specific)
 state.json
