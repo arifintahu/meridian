@@ -214,7 +214,7 @@ function normalizeConfigValue(key, value) {
     "autoSwapAfterClaim",
     "trailingTakeProfit",
     "solMode",
-    "darwinEnabled",
+    "signalStagingEnabled",
     "lpAgentRelayEnabled",
   ]);
   const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads"]);
@@ -223,9 +223,6 @@ function normalizeConfigValue(key, value) {
     "category",
     "discordSignalMode",
     "strategy",
-    "managementModel",
-    "screeningModel",
-    "generalModel",
     "hiveMindUrl",
     "hiveMindApiKey",
     "agentId",
@@ -399,13 +396,8 @@ const toolMap = {
       managementIntervalMin: ["schedule", "managementIntervalMin"],
       screeningIntervalMin: ["schedule", "screeningIntervalMin"],
       healthCheckIntervalMin: ["schedule", "healthCheckIntervalMin"],
-      // models
-      managementModel: ["llm", "managementModel"],
-      screeningModel: ["llm", "screeningModel"],
-      generalModel: ["llm", "generalModel"],
-      temperature: ["llm", "temperature"],
-      maxTokens: ["llm", "maxTokens"],
-      maxSteps: ["llm", "maxSteps"],
+      // signal staging
+      signalStagingEnabled: ["signalStaging", "enabled"],
       // strategy
       strategy: ["strategy", "strategy"],
       binsBelow: ["strategy", "maxBinsBelow", ["maxBinsBelow"]],

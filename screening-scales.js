@@ -1,5 +1,5 @@
 /**
- * Timeframe-scaled screening defaults (Meteora discovery API + prompt.js floors).
+ * Timeframe-scaled screening defaults (Meteora discovery API + screening floors).
  * fee_active_tvl_ratio and volume are window-dependent — same numeric threshold
  * means very different things on 30m vs 24h.
  */

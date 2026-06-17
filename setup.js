@@ -554,81 +554,6 @@ const screeningIntervalMin = await askNum(
   { min: 5 }
 );
 
-// ─── Section 8: LLM Provider ─────────────────────────────────────────────────
-console.log("\n── LLM Provider ──────────────────────────────────────────────");
-
-const LLM_PROVIDERS = [
-  {
-    label:   "OpenRouter   (openrouter.ai — many models)",
-    key:     "openrouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    keyHint: "sk-or-...",
-    modelDefault: "nousresearch/hermes-3-llama-3.1-405b",
-  },
-  {
-    label:   "MiniMax      (api.minimax.io)",
-    key:     "minimax",
-    baseUrl: "https://api.minimax.io/v1",
-    keyHint: "your MiniMax API key",
-    modelDefault: "MiniMax-Text-01",
-  },
-  {
-    label:   "OpenAI       (api.openai.com)",
-    key:     "openai",
-    baseUrl: "https://api.openai.com/v1",
-    keyHint: "sk-...",
-    modelDefault: "gpt-4o",
-  },
-  {
-    label:   "Local / LM Studio / Ollama (OpenAI-compatible)",
-    key:     "local",
-    baseUrl: "http://localhost:1234/v1",
-    keyHint: "(leave blank or type any value)",
-    modelDefault: "local-model",
-  },
-  {
-    label:   "Custom       (any OpenAI-compatible endpoint)",
-    key:     "custom",
-    baseUrl: "",
-    keyHint: "your API key",
-    modelDefault: "",
-  },
-];
-
-const providerChoice = await askChoice("Select LLM provider:", LLM_PROVIDERS.map((p) => ({ label: p.label, key: p.key })));
-const provider = LLM_PROVIDERS.find((p) => p.key === providerChoice.key);
-
-let llmBaseUrl = provider.baseUrl;
-if (provider.key === "local" || provider.key === "custom") {
-  llmBaseUrl = await ask("Base URL", e("llmBaseUrl", provider.baseUrl || "http://localhost:1234/v1"));
-}
-
-const llmApiKeyExisting = e("llmApiKey", existingEnv.LLM_API_KEY || existingEnv.OPENROUTER_API_KEY || "");
-const llmApiKeyRaw = await ask("API Key", llmApiKeyExisting ? "*** (already set)" : (provider.keyHint || ""));
-const llmApiKey   = llmApiKeyRaw.startsWith("***") ? llmApiKeyExisting : llmApiKeyRaw;
-
-const llmModel = await ask(
-  "Default model name",
-  e("llmModel", process.env.LLM_MODEL || provider.modelDefault)
-);
-
-// ─── Section 8b: Per-Role Models ─────────────────────────────────────────────
-console.log("\n── Per-Role Models (Enter to use default) ────────────────────");
-
-const managementModel = await ask(
-  "Management cycle model",
-  e("managementModel", llmModel)
-);
-
-const screeningModel = await ask(
-  "Screening cycle model",
-  e("screeningModel", llmModel)
-);
-
-const generalModel = await ask(
-  "General/chat model",
-  e("generalModel", llmModel)
-);
 
 // ─── Section 9: SOL Mode ─────────────────────────────────────────────────────
 console.log("\n── Display Mode ──────────────────────────────────────────────");
@@ -709,14 +634,6 @@ const userConfig = {
   // Scheduling
   managementIntervalMin,
   screeningIntervalMin,
-  // LLM
-  llmProvider: provider.key,
-  llmBaseUrl,
-  llmModel,
-  managementModel,
-  screeningModel,
-  generalModel,
-  ...(llmApiKey ? { llmApiKey } : {}),
   // Telegram — keep .env and user-config in sync
   telegramChatId: telegramChatId || process.env.TELEGRAM_CHAT_ID || existingConfig.telegramChatId || "",
   // Modes
@@ -764,13 +681,6 @@ console.log(`
   Repeat CD:    ${repeatDeployCooldownEnabled ? `${repeatDeployCooldownTriggerCount}x / ${repeatDeployCooldownHours}h / ${repeatDeployCooldownScope}` : "disabled"}
 
   Cycles:       management every ${managementIntervalMin}m  ·  screening every ${screeningIntervalMin}m
-
-  Provider:     ${provider.label.split("(")[0].trim()}
-  Default:      ${llmModel}
-  Screening:    ${screeningModel}
-  Management:   ${managementModel}
-  General:      ${generalModel}
-  Base URL:     ${llmBaseUrl}
 
   Telegram:     ${telegramToken ? "enabled" : "disabled"}
   .env:         ${ENV_PATH}

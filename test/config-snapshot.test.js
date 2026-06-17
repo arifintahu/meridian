@@ -5,7 +5,7 @@ import { snapshotConfig } from '../config.js';
 describe('snapshotConfig', () => {
   it('captures the tuning sections', () => {
     const snap = snapshotConfig();
-    for (const k of ['risk', 'screening', 'management', 'strategy', 'schedule', 'darwin', 'indicators', 'llm']) {
+    for (const k of ['risk', 'screening', 'management', 'strategy', 'schedule', 'signalStaging', 'indicators']) {
       assert.ok(snap[k], `missing section: ${k}`);
     }
     assert.equal(typeof snap.management.stopLossPct, 'number');
@@ -13,11 +13,11 @@ describe('snapshotConfig', () => {
     assert.equal(typeof snap.strategy.strategy, 'string');
   });
 
-  it('keeps llm model names but no provider keys', () => {
+  it('has no LLM section (deterministic daemon)', () => {
     const snap = snapshotConfig();
-    assert.ok('managementModel' in snap.llm);
-    assert.ok('screeningModel' in snap.llm);
-    assert.ok('generalModel' in snap.llm);
+    assert.equal(snap.llm, undefined);
+    assert.equal(snap.darwin, undefined);
+    assert.equal(typeof snap.signalStaging.enabled, 'boolean');
   });
 
   it('strips secret-bearing sections entirely', () => {

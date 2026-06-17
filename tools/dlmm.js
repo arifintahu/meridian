@@ -581,7 +581,7 @@ export async function deployPosition({
     const fakePosition = `DRY${pool_address.slice(0, 8)}${Date.now().toString(36).toUpperCase()}`;
     const binRangeMin = activeBin.binId - activeBinsBelow;
     const binRangeMax = activeBin.binId + activeBinsAbove;
-    const signalSnapshot = config.darwin?.enabled
+    const signalSnapshot = config.signalStaging?.enabled
       ? getAndClearStagedSignals(pool_address, baseMint)
       : null;
     trackPosition({
@@ -718,7 +718,7 @@ export async function deployPosition({
 
       const positionAddress = matching?.position || null;
       if (positionAddress) {
-        const signalSnapshot = config.darwin?.enabled
+        const signalSnapshot = config.signalStaging?.enabled
           ? getAndClearStagedSignals(pool_address, baseMint)
           : null;
         trackPosition({
@@ -860,7 +860,7 @@ export async function deployPosition({
     log("deploy", `SUCCESS — ${txHashes.length} tx(s): ${txHashes[0]}`);
 
     _positionsCacheAt = 0;
-    const signalSnapshot = config.darwin?.enabled
+    const signalSnapshot = config.signalStaging?.enabled
       ? getAndClearStagedSignals(pool_address, baseMint)
       : null;
     trackPosition({
@@ -1094,7 +1094,7 @@ const PERFORMANCE_SIGNAL_FIELDS = [
 ];
 
 function resolvePerformanceSignalSnapshot({ poolAddress, baseMint, tracked }) {
-  const staged = config.darwin?.enabled
+  const staged = config.signalStaging?.enabled
     ? getAndClearStagedSignals(poolAddress, baseMint)
     : null;
   const snapshot = {

@@ -136,26 +136,11 @@ export const config = {
     healthCheckIntervalMin: u.healthCheckIntervalMin ?? 60,
   },
 
-  // ─── LLM Settings ──────────────────────
-  llm: {
-    temperature: u.temperature ?? 0.373,
-    maxTokens:   u.maxTokens   ?? 4096,
-    maxSteps:    u.maxSteps    ?? 20,
-    managementModel: u.managementModel ?? process.env.LLM_MODEL ?? "openrouter/healer-alpha",
-    screeningModel:  u.screeningModel  ?? process.env.LLM_MODEL ?? "openrouter/hunter-alpha",
-    generalModel:    u.generalModel    ?? process.env.LLM_MODEL ?? "openrouter/healer-alpha",
-  },
-
-  // ─── Darwinian Signal Weighting ───────
-  darwin: {
-    enabled:        u.darwinEnabled     ?? true,
-    windowDays:     u.darwinWindowDays  ?? 60,
-    recalcEvery:    u.darwinRecalcEvery ?? 5,    // recalc every N closes
-    boostFactor:    u.darwinBoost       ?? 1.05,
-    decayFactor:    u.darwinDecay       ?? 0.95,
-    weightFloor:    u.darwinFloor       ?? 0.3,
-    weightCeiling:  u.darwinCeiling     ?? 2.5,
-    minSamples:     u.darwinMinSamples  ?? 10,
+  // ─── Signal Staging ────────────────────
+  // Gates capture of entry-time signals (signal_snapshot) for experiment
+  // attribution. The daemon is deterministic; these are recorded, not acted on.
+  signalStaging: {
+    enabled: u.signalStagingEnabled ?? u.darwinEnabled ?? true,
   },
 
   // ─── Common Token Mints ────────────────
@@ -241,16 +226,8 @@ export function snapshotConfig(cfg = config) {
     management: { ...cfg.management },
     strategy:   { ...cfg.strategy },
     schedule:   { ...cfg.schedule },
-    darwin:     { ...cfg.darwin },
+    signalStaging: { ...cfg.signalStaging },
     indicators: { ...cfg.indicators, intervals: [...(cfg.indicators?.intervals ?? [])] },
-    llm: {
-      managementModel: cfg.llm?.managementModel,
-      screeningModel:  cfg.llm?.screeningModel,
-      generalModel:    cfg.llm?.generalModel,
-      temperature:     cfg.llm?.temperature,
-      maxTokens:       cfg.llm?.maxTokens,
-      maxSteps:        cfg.llm?.maxSteps,
-    },
   };
 }
 

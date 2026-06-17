@@ -3,7 +3,6 @@ import cron from "node-cron";
 import readline from "readline";
 import path from "path";
 import { fileURLToPath } from "url";
-import { agentLoop } from "./agent.js";
 import { parseInstruction, evaluateInstruction } from "./instruction-parser.js";
 import { buildDeployReport, buildHealthSummary } from "./reports.js";
 import { log } from "./logger.js";
@@ -28,12 +27,10 @@ import {
 } from "./telegram.js";
 import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, isLowYieldClose, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
-import { getActiveStrategy } from "./strategy-library.js";
-import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
+import { recordPositionSnapshot, addPoolNote } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import { stageSignals } from "./signal-tracker.js";
-import { getWeightsSummary } from "./signal-weights.js";
 import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnabled, pullHiveMindLessons, pullHiveMindPresets, registerHiveMindAgent, startHiveMindBackgroundSync } from "./hivemind.js";
 import { appendDecision } from "./decision-log.js";
 import { getRecorder, initRecorder } from './experiment-recorder.js';
@@ -126,17 +123,6 @@ const TRAILING_DROP_CONFIRM_TOLERANCE_PCT = 1.0;
 function stripThink(text) {
   if (!text) return text;
   return text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-}
-
-function sanitizeUntrustedPromptText(text, maxLen = 500) {
-  if (!text) return null;
-  const cleaned = String(text)
-    .replace(/[\r\n\t]+/g, " ")
-    .replace(/\s+/g, " ")
-    .replace(/[<>`]/g, "")
-    .trim()
-    .slice(0, maxLen);
-  return cleaned ? JSON.stringify(cleaned) : null;
 }
 
 function shouldUsePnlRecheck() {
@@ -252,7 +238,7 @@ export async function runManagementCycle({ silent = false } = {}) {
     const positionData = positions.map((p) => {
       recordPositionSnapshot(p.pool, p);
       getRecorder()?.recordSnapshot(p.pool, p);
-      return { ...p, recall: recallForPool(p.pool) };
+      return p;
     });
 
     // JS trailing TP check
@@ -460,18 +446,14 @@ export async function runScreeningCycle({ silent = false } = {}) {
     liveMessage = await createLiveMessage("🔍 Screening Cycle", "Scanning candidates...");
   }
   timers.screeningLastRun = Date.now();
-  log("cron", `Starting screening cycle [model: ${config.llm.screeningModel}]`);
+  log("cron", "Starting screening cycle");
   try {
     // Reuse pre-fetched balance — no extra RPC call needed
     const currentBalance = preBalance;
     const deployAmount = computeDeployAmount(currentBalance.sol);
     log("cron", `Computed deploy amount: ${deployAmount} SOL (wallet: ${currentBalance.sol} SOL)`);
 
-    // Load active strategy
-    const activeStrategy = getActiveStrategy();
     const deployStrategy = config.strategy.strategy;
-    const strategyBlock = `DEPLOY STRATEGY: ${deployStrategy} (from config) | bins_above: 0 (FIXED — never change) | deposit: SOL only (amount_y, amount_x=0)`
-      + (activeStrategy ? `\nSTRATEGY CONTEXT: ${activeStrategy.name} — entry: ${activeStrategy.entry?.condition || "n/a"} | exit: ${activeStrategy.exit?.notes || "n/a"} | best for: ${activeStrategy.best_for}` : "");
 
     // Fetch top candidates, then recon each sequentially with a small delay to avoid 429s
     const topCandidates = await getTopCandidates({ limit: 10 }).catch(() => null);
@@ -491,7 +473,6 @@ export async function runScreeningCycle({ silent = false } = {}) {
         sw: smartWallets.status === "fulfilled" ? smartWallets.value : null,
         n: narrative.status === "fulfilled" ? narrative.value : null,
         ti: tokenInfo.status === "fulfilled" ? tokenInfo.value?.results?.[0] : null,
-        mem: recallForPool(pool.pool),
       });
       await new Promise(r => setTimeout(r, 150)); // avoid 429s
     }
@@ -573,34 +554,9 @@ export async function runScreeningCycle({ silent = false } = {}) {
       passing.map(({ pool }) => getActiveBin({ pool_address: pool.pool }))
     );
 
-    // Build compact candidate blocks
-    const candidateBlocks = passing.map(({ pool, sw, n, ti, mem }, i) => {
-      const botPct = ti?.audit?.bot_holders_pct ?? "?";
-      const top10Pct = ti?.audit?.top_holders_pct ?? "?";
-      const feesSol = ti?.global_fees_sol ?? "?";
-      const launchpad = ti?.launchpad ?? null;
-      const priceChange = ti?.stats_1h?.price_change;
-      const netBuyers = ti?.stats_1h?.net_buyers;
-      const activeBin = activeBinResults[i]?.status === "fulfilled" ? activeBinResults[i].value?.binId : null;
-
-      const pvpLine = pool.is_pvp
-        ? `  pvp: HIGH — rival ${pool.pvp_rival_name || pool.pvp_symbol} (${pool.pvp_rival_mint?.slice(0, 8)}...) has pool ${pool.pvp_rival_pool?.slice(0, 8)}..., tvl=$${pool.pvp_rival_tvl}, holders=${pool.pvp_rival_holders}, fees=${pool.pvp_rival_fees}SOL`
-        : null;
-
-      const block = [
-        `POOL: ${pool.name} (${pool.pool})`,
-        `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.tvl ?? pool.active_tvl}, volatility_${pool.volatility_timeframe || "30m"}=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
-        `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
-        pvpLine,
-        `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map(w => w.name).join(", ")})` : ""}`,
-        activeBin != null ? `  active_bin: ${activeBin}` : null,
-        priceChange != null ? `  1h: price${priceChange >= 0 ? "+" : ""}${priceChange}%, net_buyers=${netBuyers ?? "?"}` : null,
-        n?.narrative ? `  narrative_untrusted: ${sanitizeUntrustedPromptText(n.narrative, 500)}` : `  narrative_untrusted: none`,
-        mem ? `  memory_untrusted: ${sanitizeUntrustedPromptText(mem, 500)}` : null,
-      ].filter(Boolean).join("\n");
-
-      // Stage signals for Darwinian weighting — captured before LLM decides
-      if (config.darwin?.enabled) {
+    // Stage entry-time signals for experiment attribution (signal_snapshot).
+    if (config.signalStaging?.enabled) {
+      for (const { pool, sw, n, ti } of passing) {
         const baseMint = pool.base?.mint || pool.base_mint || ti?.mint || null;
         stageSignals(pool.pool, {
           base_mint:             baseMint,
@@ -614,9 +570,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
           volatility:            pool.volatility            ?? null,
         });
       }
-
-      return block;
-    });
+    }
 
     // ── Deterministic deploy: top-scored survivor ──────────────────────
     // passing[] preserves getTopCandidates' score-descending order, so
@@ -927,8 +881,6 @@ const isTTY = process.stdin.isTTY;
 let cronStarted = false;
 let busy = false;
 const _telegramQueue = []; // queued messages received while agent was busy
-const sessionHistory = []; // persists conversation across REPL turns
-const MAX_HISTORY = 20;    // keep last 20 messages (10 exchanges)
 let _ttyInterface = null;
 let _latestCandidates = [];
 let _latestCandidatesAt = null;
@@ -1341,15 +1293,6 @@ async function deployLatestCandidate(index) {
     throw new Error(result.error || "Deploy failed");
   }
   return { result, candidate, deployAmount, binsBelow };
-}
-
-function appendHistory(userMsg, assistantMsg) {
-  sessionHistory.push({ role: "user", content: userMsg });
-  sessionHistory.push({ role: "assistant", content: assistantMsg });
-  // Trim to last MAX_HISTORY messages
-  if (sessionHistory.length > MAX_HISTORY) {
-    sessionHistory.splice(0, sessionHistory.length - MAX_HISTORY);
-  }
 }
 
 function refreshPrompt() {
