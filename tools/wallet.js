@@ -8,6 +8,7 @@ import {
 import bs58 from "bs58";
 import { log } from "../logger.js";
 import { config } from "../config.js";
+import { fetchWithTimeout } from "../utils/fetch.js";
 
 let _connection = null;
 let _wallet = null;
@@ -72,7 +73,7 @@ export async function getWalletBalances() {
 
   try {
     const url = `https://api.helius.xyz/v1/wallet/${walletAddress}/balances?api-key=${HELIUS_KEY}`;
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url);
     
     if (!res.ok) {
       throw new Error(`Helius API error: ${res.status} ${res.statusText}`);
@@ -186,7 +187,7 @@ export async function swapToken({
     const orderUrl = `${JUPITER_SWAP_V2_API}/order?${search.toString()}`;
     const jupiterApiKey = getJupiterApiKey();
 
-    const orderRes = await fetch(orderUrl, {
+    const orderRes = await fetchWithTimeout(orderUrl, {
       headers: jupiterApiKey ? { "x-api-key": jupiterApiKey } : {},
     });
     if (!orderRes.ok) {
@@ -207,14 +208,14 @@ export async function swapToken({
     const signedTx = Buffer.from(tx.serialize()).toString("base64");
 
     // ─── Execute ───────────────────────────────────────────────
-    const execRes = await fetch(`${JUPITER_SWAP_V2_API}/execute`, {
+    const execRes = await fetchWithTimeout(`${JUPITER_SWAP_V2_API}/execute`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...(jupiterApiKey ? { "x-api-key": jupiterApiKey } : {}),
       },
       body: JSON.stringify({ signedTransaction: signedTx, requestId }),
-    });
+    }, 60_000);
     if (!execRes.ok) {
       throw new Error(`Swap V2 execute failed: ${execRes.status} ${await execRes.text()}`);
     }

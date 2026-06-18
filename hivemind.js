@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { log } from "./logger.js";
 import { config } from "./config.js";
 import { repoPath } from "./repo-root.js";
+import { fetchWithTimeout } from "./utils/fetch.js";
 
 const USER_CONFIG_PATH = repoPath("user-config.json");
 const CACHE_PATH = repoPath("hivemind-cache.json");
@@ -117,7 +118,7 @@ function buildUrl(pathname, query = {}) {
 
 async function requestJson(pathname, { method = "GET", body = null, query = {} } = {}) {
   if (!isHiveMindEnabled()) return null;
-  const response = await fetch(buildUrl(pathname, query), {
+  const response = await fetchWithTimeout(buildUrl(pathname, query), {
     method,
     headers: {
       accept: "application/json",

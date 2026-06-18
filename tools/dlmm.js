@@ -31,6 +31,7 @@ import { normalizeMint, getWalletBalances } from "./wallet.js";
 import { appendDecision } from "../decision-log.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "./agent-meridian.js";
 import { getAndClearStagedSignals } from "../signal-tracker.js";
+import { fetchWithTimeout } from "../utils/fetch.js";
 
 // ─── Lazy SDK loader ───────────────────────────────────────────
 // @meteora-ag/dlmm → @coral-xyz/anchor uses CJS directory imports
@@ -411,7 +412,7 @@ async function getPoolMetadata(poolAddress) {
   }
 
   try {
-    const res = await fetch(`https://dlmm.datapi.meteora.ag/pools/${key}`);
+    const res = await fetchWithTimeout(`https://dlmm.datapi.meteora.ag/pools/${key}`);
     if (!res.ok) {
       throw new Error(`Pool metadata API ${res.status}`);
     }
@@ -946,7 +947,7 @@ async function fetchLpAgentOpenPositions(walletAddress) {
 
   const url = `${LPAGENT_API}/lp-positions/opening?owner=${walletAddress}`;
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: {
         "x-api-key": process.env.LPAGENT_API_KEY,
       },
@@ -974,7 +975,7 @@ async function fetchLpAgentOpenPositions(walletAddress) {
 async function fetchDlmmPnlForPool(poolAddress, walletAddress) {
   const url = `https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${walletAddress}&status=open&pageSize=100&page=1`;
   try {
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url);
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       log("pnl_api", `HTTP ${res.status} for pool ${poolAddress.slice(0, 8)}: ${body.slice(0, 120)}`);
@@ -1386,7 +1387,7 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
     // Detailed range data stays on Meteora PnL API; value/PnL can be overridden by LPAgent below.
     if (!silent) log("positions", "Fetching portfolio via Meteora portfolio API...");
     const portfolioUrl = `https://dlmm.datapi.meteora.ag/portfolio/open?user=${walletAddress}`;
-    const res = await fetch(portfolioUrl);
+    const res = await fetchWithTimeout(portfolioUrl);
     if (!res.ok) throw new Error(`Portfolio API ${res.status}: ${await res.text().catch(() => "")}`);
     const portfolio = await res.json();
 
@@ -1627,7 +1628,7 @@ export async function getWalletPositions({ wallet_address }) {
 // ─── Search Pools by Query ─────────────────────────────────────
 export async function searchPools({ query, limit = 10 }) {
   const url = `https://dlmm.datapi.meteora.ag/pools?query=${encodeURIComponent(query)}`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url);
   if (!res.ok) throw new Error(`Pool search API error: ${res.status} ${res.statusText}`);
   const data = await res.json();
   const pools = (Array.isArray(data) ? data : data.data || []).slice(0, limit);
@@ -1872,7 +1873,7 @@ export async function closePosition({ position_address, reason }) {
         try {
           const closedUrl = `https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${wallet.publicKey.toString()}&status=closed&pageSize=50&page=1`;
           for (let attempt = 0; attempt < 6; attempt++) {
-            const res = await fetch(closedUrl);
+            const res = await fetchWithTimeout(closedUrl);
             if (res.ok) {
               const data = await res.json();
               const posEntry = (data.positions || []).find((entry) => entry.positionAddress === position_address);
@@ -1902,7 +1903,7 @@ export async function closePosition({ position_address, reason }) {
         let exitMarket = {};
         try {
           const { default: fetch } = await import("node-fetch").catch(() => ({ default: globalThis.fetch }));
-          const exitDetail = await fetch(`https://pool-discovery-api.datapi.meteora.ag/pools?page_size=1&filter_by=${encodeURIComponent(`pool_address=${poolAddress}`)}&timeframe=${encodeURIComponent(config.screening?.timeframe || "5m")}`).then(r => r.json()).catch(() => null);
+          const exitDetail = await fetchWithTimeout(`https://pool-discovery-api.datapi.meteora.ag/pools?page_size=1&filter_by=${encodeURIComponent(`pool_address=${poolAddress}`)}&timeframe=${encodeURIComponent(config.screening?.timeframe || "5m")}`).then(r => r.json()).catch(() => null);
           const ep = exitDetail?.data?.[0];
           if (ep) {
             exitMarket = {
@@ -2144,7 +2145,7 @@ export async function closePosition({ position_address, reason }) {
       try {
         const closedUrl = `https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${wallet.publicKey.toString()}&status=closed&pageSize=50&page=1`;
         for (let attempt = 0; attempt < 6; attempt++) {
-          const res = await fetch(closedUrl);
+          const res = await fetchWithTimeout(closedUrl);
           if (res.ok) {
             const data = await res.json();
             const posEntry = (data.positions || []).find(p => p.positionAddress === position_address);
@@ -2207,7 +2208,7 @@ export async function closePosition({ position_address, reason }) {
 
       let exitMarket = {};
       try {
-        const exitDetail = await fetch(`https://pool-discovery-api.datapi.meteora.ag/pools?page_size=1&filter_by=${encodeURIComponent(`pool_address=${poolAddress}`)}&timeframe=${encodeURIComponent(config.screening?.timeframe || "5m")}`).then(r => r.json()).catch(() => null);
+        const exitDetail = await fetchWithTimeout(`https://pool-discovery-api.datapi.meteora.ag/pools?page_size=1&filter_by=${encodeURIComponent(`pool_address=${poolAddress}`)}&timeframe=${encodeURIComponent(config.screening?.timeframe || "5m")}`).then(r => r.json()).catch(() => null);
         const ep = exitDetail?.data?.[0];
         if (ep) {
           exitMarket = {
