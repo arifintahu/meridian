@@ -333,13 +333,13 @@ export async function runManagementCycle({ silent = false } = {}) {
         try {
           if (act.action === "CLOSE") {
             await liveMessage?.toolStart("close_position");
-            const r = await executeTool("close_position", { position: p.position });
+            const r = await executeTool("close_position", { position_address: p.position });
             const ok = r && r.success !== false && !r.error;
             await liveMessage?.toolFinish("close_position", r, ok);
             resultLines.push(`${p.pair}: ${ok ? "✅ closed" : `❌ close failed (${r?.error || "?"})`} — ${act.reason || act.rule || "exit"}`);
           } else if (act.action === "CLAIM") {
             await liveMessage?.toolStart("claim_fees");
-            const r = await executeTool("claim_fees", { position: p.position });
+            const r = await executeTool("claim_fees", { position_address: p.position });
             const ok = r && r.success !== false && !r.error;
             await liveMessage?.toolFinish("claim_fees", r, ok);
             resultLines.push(`${p.pair}: ${ok ? "✅ claimed" : `❌ claim failed (${r?.error || "?"})`}`);
@@ -350,7 +350,7 @@ export async function runManagementCycle({ silent = false } = {}) {
               resultLines.push(`${p.pair}: ⏸ HOLD — instruction not understood (no LLM fallback)`);
             } else if (evaluateInstruction(parsed, p)) {
               await liveMessage?.toolStart("close_position");
-              const r = await executeTool("close_position", { position: p.position });
+              const r = await executeTool("close_position", { position_address: p.position });
               const ok = r && r.success !== false && !r.error;
               await liveMessage?.toolFinish("close_position", r, ok);
               resultLines.push(`${p.pair}: ${ok ? "✅ closed" : `❌ close failed (${r?.error || "?"})`} — instruction met (${parsed.metric} ${parsed.op} ${parsed.value})`);
