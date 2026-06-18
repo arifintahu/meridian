@@ -6,7 +6,7 @@ Compare all available Meteora DLMM pools for this token pair using the Meteora d
 
 1. Search pools by token:
 ```
-!`curl -s "https://dlmm.datapi.meteora.ag/pools/groups?query=$ARGUMENTS&sort_by=fee_tvl_ratio&page_size=10"`
+!`curl -s "https://dlmm.datapi.meteora.ag/pools/groups?query=$ARGUMENTS&sort_by=fee_tvl_ratio_24h:desc&page_size=10"`
 ```
 
 2. Get protocol-wide stats for context:

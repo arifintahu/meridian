@@ -26,7 +26,7 @@ Each cycle (`node cli.js screen`):
 - `node cli.js pool-memory --pool <addr>` — prior deploys, win rate, cooldowns
 - `node cli.js lessons` / `node cli.js blacklist list` — learned rules / blocked tokens
 - Meteora API via `curl`:
-  - `https://dlmm.datapi.meteora.ag/pools/groups?query=<token>&sort_by=fee_tvl_ratio`
+  - `https://dlmm.datapi.meteora.ag/pools/groups?query=<token>&sort_by=fee_tvl_ratio_24h:desc`
   - `https://dlmm.datapi.meteora.ag/pools/<addr>/ohlcv?timeframe=1h`
   - `https://dlmm.datapi.meteora.ag/pools/<addr>/volume/history?timeframe=1h`
 
