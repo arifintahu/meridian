@@ -1,5 +1,5 @@
 ---
-description: Evaluate a dry-run experiment — queries SQLite DB, analyses results, recommends config changes, then applies + commits the approved change to the tracked user-config.json
+description: Evaluate a dry-run experiment — queries the remote experiment Postgres (EXPERIMENT_POSTGRES_URL), analyses results, recommends config changes, then applies + commits the approved change to the tracked user-config.json
 ---
 
 Evaluate dry-run experiment results and recommend config changes.
@@ -13,55 +13,34 @@ Evaluate dry-run experiment results and recommend config changes.
 - No args → list recent experiments, ask which to evaluate
 - With label/id → evaluate that experiment
 
+> **Data source:** experiments are read from the remote Postgres
+> (`EXPERIMENT_POSTGRES_URL`), not local SQLite. The daemon writes to local
+> SQLite and the outbox worker (`db/sync.js`) syncs to Postgres, so runs from
+> other runners only exist in Postgres. The `scripts/eval-query.js` helper
+> loads `.env`, connects to Postgres, and normalises types (BIGINT/NUMERIC →
+> numbers, JSONB → JSON strings) so the analysis below is unchanged.
+
 ## Steps
 
 ### 1. Find experiments
 
 ```bash
-node -e "
-import('./db/connection.js').then(({ initDb }) => {
-  const db = initDb();
-  const rows = db.prepare('SELECT id, label, started_at, ended_at FROM experiments ORDER BY started_at DESC LIMIT 10').all();
-  for (const r of rows) {
-    const started = new Date(r.started_at).toISOString().slice(0,16);
-    const ended = r.ended_at ? new Date(r.ended_at).toISOString().slice(0,16) : 'running';
-    console.log(r.id, '|', r.label, '|', started, '->', ended);
-  }
-  db.close();
-});
-"
+node scripts/eval-query.js list
 ```
 
 If no label/id given, show the list and ask the user which to evaluate.
 
 ### 2. Load positions and screening events
 
-Replace `LABEL_OR_ID` with the experiment label or id:
+Pass the experiment label or id (prints `not found` if it doesn't exist):
 
 ```bash
-node -e "
-const LABEL = 'LABEL_OR_ID';
-import('./db/connection.js').then(({ initDb }) => {
-  const db = initDb();
-  const exp = db.prepare('SELECT * FROM experiments WHERE label = ? OR id = ? ORDER BY started_at DESC LIMIT 1').get(LABEL, LABEL);
-  if (!exp) { console.log('not found'); db.close(); return; }
-
-  const positions = db.prepare('SELECT * FROM positions WHERE experiment_id = ? ORDER BY deployed_at ASC').all(exp.id);
-  const closed = positions.filter(p => p.closed_at);
-  const screening = db.prepare('SELECT type, COUNT(*) as n FROM screening_events WHERE experiment_id = ? GROUP BY type').all(exp.id);
-
-  console.log('=== EXPERIMENT ===');
-  console.log(JSON.stringify(exp, null, 2));
-  console.log('=== SCREENING ===');
-  console.log(JSON.stringify(screening, null, 2));
-  console.log('=== CLOSED POSITIONS ===');
-  console.log(JSON.stringify(closed, null, 2));
-  console.log('=== OPEN POSITIONS ===');
-  console.log(JSON.stringify(positions.filter(p => !p.closed_at), null, 2));
-  db.close();
-});
-"
+node scripts/eval-query.js load LABEL_OR_ID
 ```
+
+This prints four sections — `=== EXPERIMENT ===`, `=== SCREENING ===`,
+`=== CLOSED POSITIONS ===`, `=== OPEN POSITIONS ===` — each as JSON. The
+`config_snapshot` and `signal_snapshot` fields are JSON strings (parse them).
 
 ### 3. Analyse and present
 
