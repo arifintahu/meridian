@@ -32,8 +32,7 @@ context.md
 CONTEXT.md
 dev-blocklist.json
 # Ignore docs/ except the evaluation audit trail (docs/evals/), which is tracked.
-docs/*
-!docs/evals/
+docs/superpowers/
 
 # Discord listener queue
 discord-signals.json
