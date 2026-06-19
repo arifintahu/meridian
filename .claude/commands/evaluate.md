@@ -87,6 +87,31 @@ If the user approves a recommendation:
    ```
 7. Confirm what was committed and that the runner can pick it up with `git pull`.
 
+### 5. Write the evaluation doc (always)
+
+Every `/evaluate` run records its result to `docs/evals/`, whether or not a config
+change was applied. This is the audit trail of what each experiment taught us.
+
+1. Get the timestamp (don't guess): `date -u +"%Y-%m-%dT%H:%M:%SZ"` and `date +"%Y-%m-%d %H:%M:%S %Z"`.
+2. Copy `docs/evals/TEMPLATE.md` to `docs/evals/<YYYY-MM-DD>-<exp-id>.md`
+   (e.g. `docs/evals/2026-06-19-exp-5300018c.md`).
+3. Fill it in from the analysis in Step 3:
+   - Front-matter: `experiment_id`, `label`, `evaluated_at`, `status_at_eval`,
+     `closed_positions`, and `commits` (any commits made this run — config tune,
+     code changes; omit the list if none).
+   - Sections 1–2: performance tables, exit-reason breakdown, best/worst, signal
+     correlation, diagnosis.
+   - Section 3 (config changes): the applied before/after, or **None** if nothing
+     was applied (still record the recommendation that was declined/deferred).
+   - Section 4 (code changes): before/after diffs for any code edited during the
+     evaluation, or **None — read-only evaluation.** Keep it self-contained.
+4. Commit the doc on its own (separate from the `user-config.json` commit, per the
+   guardrails):
+   ```bash
+   git add docs/evals/<YYYY-MM-DD>-<exp-id>.md
+   git commit -m "docs(eval): <experiment-label> evaluation"
+   ```
+
 ## Guardrails
 - Never apply config changes without explicit user confirmation.
 - Config changes go through git: tune here, commit, `git pull` on the runner —
