@@ -11,7 +11,9 @@ export function getPool() {
   if (_pool) return _pool;
   const url = process.env.EXPERIMENT_POSTGRES_URL;
   if (!url) return null;
-  _pool = new Pool({ connectionString: url, max: 5 });
+  // connectionTimeoutMillis caps how long a query waits for a connection so the
+  // startup reconcile (db/experiments.js) can't hang the daemon on a dead host.
+  _pool = new Pool({ connectionString: url, max: 5, connectionTimeoutMillis: 10000 });
   _pool.on('error', (err) => {
     console.error('[experiment-pg] pool error:', err.message);
   });

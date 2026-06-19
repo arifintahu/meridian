@@ -35,7 +35,7 @@ import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnable
 import { appendDecision } from "./decision-log.js";
 import { getRecorder, initRecorder } from './experiment-recorder.js';
 import { initDb } from './db/connection.js';
-import { createOrResumeExperiment } from './db/experiments.js';
+import { createOrResumeExperiment, reconcileEndedFromPostgres } from './db/experiments.js';
 import { startPostgresSync, stopPostgresSync } from './db/sync.js';
 import { closePool } from './db/postgres.js';
 
@@ -60,6 +60,9 @@ if (isMain) {
     try {
       const label = process.env.EXPERIMENT_LABEL || `dry-run-${new Date().toISOString().slice(0, 10)}`;
       const _db = initDb();
+      // Postgres is the source of truth: if the latest run for this label ended
+      // there, close stale local rows so a fresh exp id is created below.
+      await reconcileEndedFromPostgres(_db, label);
       const experiment = createOrResumeExperiment(_db, { label, configSnapshot: snapshotConfig(config) });
       initRecorder(_db, experiment.id);
       startPostgresSync(_db);
