@@ -98,6 +98,7 @@ export function trackPosition({
     signal_snapshot: signal_snapshot || null,
     deployed_at: new Date().toISOString(),
     out_of_range_since: null,
+    in_range_drawdown_since: null,
     last_claim_at: null,
     total_fees_claimed_usd: 0,
     rebalance_count: 0,
@@ -390,6 +391,28 @@ export function isLowYieldClose({ feePerTvl24h, minFeePerTvl24h, ageMinutes, min
 }
 
 /**
+ * Pure predicate: should a position close for a sustained in-range drawdown?
+ *
+ * Catches the failure mode no other rule reaches — a single-sided position that
+ * bleeds while staying *in range* (OOR never fires, the hard stop is deeper).
+ * Keys on absolute PnL (not from-peak like trailing TP): the clock must have been
+ * running (minutesInDrawdown finite, i.e. PnL has sat at/below the floor) for at
+ * least the wait window, and PnL must still be at/below the floor on this tick.
+ * Returns false unless explicitly enabled — preserves current behavior by default.
+ */
+export function isSustainedDrawdownClose({ pnlPct, drawdownExitPct, minutesInDrawdown, drawdownWaitMinutes, enabled }) {
+  const wait = drawdownWaitMinutes ?? 60;
+  return (
+    enabled === true &&
+    drawdownExitPct != null &&
+    pnlPct != null &&
+    pnlPct <= drawdownExitPct &&
+    Number.isFinite(minutesInDrawdown) &&
+    minutesInDrawdown >= wait
+  );
+}
+
+/**
  * Check all exit conditions for a position (trailing TP, stop loss, OOR, low yield).
  * Updates peak_pnl_pct, trailing_active, and OOR state.
  * @param {string} position_address
@@ -435,6 +458,24 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     log("state", `Position ${position_address} back in range`);
   }
 
+  // Update in-range drawdown clock (sustained-loss timer).
+  // Only runs on trustworthy in-range ticks: a confirmed-OOR break is handled
+  // faster by the OOR rule, and a suspicious PnL tick is ignored entirely so a
+  // bad reading can neither start nor clear the clock.
+  if (mgmtConfig.inRangeDrawdownExitEnabled && mgmtConfig.inRangeDrawdownPct != null && !pnl_pct_suspicious) {
+    const inDrawdown =
+      currentPnlPct != null && in_range !== false && currentPnlPct <= mgmtConfig.inRangeDrawdownPct;
+    if (inDrawdown && !pos.in_range_drawdown_since) {
+      pos.in_range_drawdown_since = new Date().toISOString();
+      changed = true;
+      log("state", `Position ${position_address} entered in-range drawdown (PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.inRangeDrawdownPct}%)`);
+    } else if (!inDrawdown && pos.in_range_drawdown_since) {
+      pos.in_range_drawdown_since = null;
+      changed = true;
+      log("state", `Position ${position_address} exited in-range drawdown`);
+    }
+  }
+
   if (changed) save(state);
 
   // ── Stop loss ──────────────────────────────────────────────────
@@ -443,6 +484,25 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
       action: "STOP_LOSS",
       reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.stopLossPct}%`,
     };
+  }
+
+  // ── In-range sustained drawdown ────────────────────────────────
+  // Softer, time-confirmed net below the hard stop: cuts positions that bleed
+  // while staying in range (the OOR rule never fires, the hard stop is deeper).
+  if (!pnl_pct_suspicious && pos.in_range_drawdown_since) {
+    const minutesInDrawdown = Math.floor((Date.now() - new Date(pos.in_range_drawdown_since).getTime()) / 60000);
+    if (isSustainedDrawdownClose({
+      pnlPct: currentPnlPct,
+      drawdownExitPct: mgmtConfig.inRangeDrawdownPct,
+      minutesInDrawdown,
+      drawdownWaitMinutes: mgmtConfig.inRangeDrawdownWaitMinutes,
+      enabled: mgmtConfig.inRangeDrawdownExitEnabled,
+    })) {
+      return {
+        action: "IN_RANGE_DRAWDOWN",
+        reason: `In-range drawdown: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.inRangeDrawdownPct}% for ${minutesInDrawdown}m (limit: ${mgmtConfig.inRangeDrawdownWaitMinutes ?? 60}m)`,
+      };
+    }
   }
 
   // ── Trailing TP ────────────────────────────────────────────────

@@ -216,6 +216,7 @@ function normalizeConfigValue(key, value) {
     "solMode",
     "signalStagingEnabled",
     "lpAgentRelayEnabled",
+    "inRangeDrawdownExitEnabled",
   ]);
   const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads"]);
   const stringKeys = new Set([
@@ -388,6 +389,9 @@ const toolMap = {
       gasReserve: ["management", "gasReserve"],
       positionSizePct: ["management", "positionSizePct"],
       minAgeBeforeYieldCheck: ["management", "minAgeBeforeYieldCheck"],
+      inRangeDrawdownExitEnabled: ["management", "inRangeDrawdownExitEnabled"],
+      inRangeDrawdownPct: ["management", "inRangeDrawdownPct"],
+      inRangeDrawdownWaitMinutes: ["management", "inRangeDrawdownWaitMinutes"],
       // risk
       maxPositions: ["risk", "maxPositions"],
       maxDeployAmount: ["risk", "maxDeployAmount"],

@@ -108,6 +108,11 @@ export const config = {
     takeProfitPct:         u.takeProfitPct         ?? u.takeProfitFeePct ?? 5,
     minFeePerTvl24h:       u.minFeePerTvl24h       ?? 7,
     minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 60, // minutes before low yield can trigger close
+    // In-range sustained-drawdown exit — cuts positions that bleed while staying
+    // in range (the OOR rule never fires; the hard stop is deeper). Off by default.
+    inRangeDrawdownExitEnabled: u.inRangeDrawdownExitEnabled ?? false,
+    inRangeDrawdownPct:         u.inRangeDrawdownPct         ?? -10, // PnL floor that starts the clock
+    inRangeDrawdownWaitMinutes: u.inRangeDrawdownWaitMinutes ?? 60,  // minutes PnL must stay <= floor before closing
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
