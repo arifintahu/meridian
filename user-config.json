@@ -48,7 +48,7 @@
   "repeatDeployCooldownScope": "token",
   "repeatDeployCooldownMinFeeEarnedPct": 0,
   "minVolumeToRebalance": 1000,
-  "stopLossPct": -35,
+  "stopLossPct": -20,
   "takeProfitPct": 5,
   "minFeePerTvl24h": 7,
   "minAgeBeforeYieldCheck": 60,
