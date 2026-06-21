@@ -43,12 +43,37 @@ export function endExperiment(db, id) {
 }
 
 /**
+ * Pure decision for reconcileEndedFromPostgres: given the latest Postgres run
+ * for a label and the currently-open local rows, return the ids to close.
+ *
+ * Closes only rows the "latest ended" verdict actually covers — those started
+ * at or before the latest known Postgres run. A local row *newer* than anything
+ * in Postgres (started_at > latest.started_at) is a fresh run that simply hasn't
+ * synced yet (the outbox lags ~5s); closing it would orphan it and make
+ * createOrResumeExperiment() spawn a duplicate. Leaving it open lets the next
+ * startup resume it instead — so repeated restarts are idempotent.
+ *
+ * @param {{ started_at: number|string, ended_at: number|string|null }|undefined} latest
+ * @param {Array<{ id: string, started_at: number|string }>} openRows
+ * @returns {string[]} ids to end
+ */
+export function experimentsToCloseOnReconcile(latest, openRows) {
+  if (!latest || latest.ended_at == null) return [];
+  const latestStartedAt = Number(latest.started_at);
+  if (!Number.isFinite(latestStartedAt)) return [];
+  return openRows
+    .filter((row) => Number(row.started_at) <= latestStartedAt)
+    .map((row) => row.id);
+}
+
+/**
  * Reconcile local experiment state against Postgres (the source of truth).
  *
- * If the most recent run for `label` has already ended in Postgres, close any
- * still-open local rows for that label. That way the subsequent
- * createOrResumeExperiment() finds no open local run and starts a fresh exp id,
- * instead of resuming a run the source of truth considers finished.
+ * If the most recent run for `label` has already ended in Postgres, close the
+ * still-open local rows that verdict covers (see experimentsToCloseOnReconcile).
+ * That way the subsequent createOrResumeExperiment() either resumes a fresh
+ * not-yet-synced local run or starts a new exp id — never closes a brand-new run
+ * and duplicates it.
  *
  * No-op when Postgres isn't configured (getPool() === null) or is unreachable —
  * in that case the original local-only resume behaviour stands.
@@ -63,7 +88,7 @@ export async function reconcileEndedFromPostgres(db, label) {
   let latest;
   try {
     const { rows } = await pool.query(
-      'SELECT id, ended_at FROM experiments WHERE label = $1 ORDER BY started_at DESC LIMIT 1',
+      'SELECT id, started_at, ended_at FROM experiments WHERE label = $1 ORDER BY started_at DESC LIMIT 1',
       [label]
     );
     latest = rows[0];
@@ -75,8 +100,8 @@ export async function reconcileEndedFromPostgres(db, label) {
   // Only act when the source of truth says the latest run for this label ended.
   if (!latest || latest.ended_at == null) return;
 
-  const open = db.prepare('SELECT id FROM experiments WHERE label = ? AND ended_at IS NULL').all(label);
-  for (const row of open) endExperiment(db, row.id);
+  const open = db.prepare('SELECT id, started_at FROM experiments WHERE label = ? AND ended_at IS NULL').all(label);
+  for (const id of experimentsToCloseOnReconcile(latest, open)) endExperiment(db, id);
 }
 
 /**

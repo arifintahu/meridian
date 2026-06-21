@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { createTestDb } from './helpers.js';
 import { initDb } from '../../db/connection.js';
 import { insertOutbox, getPendingOutbox, markOutboxSynced, markOutboxFailed } from '../../db/outbox.js';
-import { createOrResumeExperiment, endExperiment, listExperiments } from '../../db/experiments.js';
+import { createOrResumeExperiment, endExperiment, listExperiments, experimentsToCloseOnReconcile } from '../../db/experiments.js';
 import { insertPosition, updatePositionClose, insertSnapshot, getPositions } from '../../db/positions.js';
 import { insertScreeningEvent, getScreeningEvents } from '../../db/screening.js';
 
@@ -111,6 +111,47 @@ describe('db/experiments', () => {
     const row = db.prepare('SELECT * FROM experiments WHERE id = ?').get(exp.id);
     assert.ok(row.ended_at > 0);
     db.close();
+  });
+});
+
+describe('experimentsToCloseOnReconcile', () => {
+  it('returns nothing when Postgres has no run for the label', () => {
+    assert.deepEqual(experimentsToCloseOnReconcile(undefined, [{ id: 'a', started_at: 100 }]), []);
+  });
+
+  it('returns nothing when the latest Postgres run is still active', () => {
+    const latest = { started_at: 200, ended_at: null };
+    assert.deepEqual(experimentsToCloseOnReconcile(latest, [{ id: 'a', started_at: 100 }]), []);
+  });
+
+  it('closes a local run started at/before the latest ended Postgres run', () => {
+    const latest = { started_at: 200, ended_at: 250 };
+    assert.deepEqual(experimentsToCloseOnReconcile(latest, [{ id: 'old', started_at: 100 }]), ['old']);
+    // boundary: equal started_at is the run Postgres ended → close it
+    assert.deepEqual(experimentsToCloseOnReconcile(latest, [{ id: 'same', started_at: 200 }]), ['same']);
+  });
+
+  it('does NOT close a fresh local run newer than anything in Postgres (the double-create bug)', () => {
+    // Postgres still shows the manually-ended run (#2); the just-created local
+    // run (#3) has not synced yet, so its started_at is newer than Postgres's latest.
+    const latest = { started_at: 1781854039383, ended_at: 1782010594972 };
+    const freshLocal = [{ id: 'exp-f2533f16', started_at: 1782010594979 }];
+    assert.deepEqual(experimentsToCloseOnReconcile(latest, freshLocal), []);
+  });
+
+  it('handles BIGINT-as-string from the pg driver', () => {
+    const latest = { started_at: '200', ended_at: '250' };
+    const open = [{ id: 'old', started_at: 100 }, { id: 'new', started_at: 999 }];
+    assert.deepEqual(experimentsToCloseOnReconcile(latest, open), ['old']);
+  });
+
+  it('closes only the covered subset when both old and fresh rows are open', () => {
+    const latest = { started_at: 500, ended_at: 600 };
+    const open = [
+      { id: 'old', started_at: 400 },   // covered → close
+      { id: 'fresh', started_at: 700 }, // newer than Postgres → keep
+    ];
+    assert.deepEqual(experimentsToCloseOnReconcile(latest, open), ['old']);
   });
 });
 
