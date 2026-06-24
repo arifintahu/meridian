@@ -18,6 +18,15 @@ const STATE_FILE = repoPath("state.json");
 const MAX_RECENT_EVENTS = 20;
 const MAX_INSTRUCTION_LENGTH = 280;
 
+// In-range drawdown clock tolerance. A single management tick (~managementIntervalMin
+// apart) back above the drawdown floor must NOT reset the sustained-loss clock —
+// otherwise a choppy in-range bleed that pokes above the floor between ticks keeps
+// restarting the timer, so "N continuous minutes below the floor" never holds (the
+// rule fired 0× across two staging runs). Only a recovery sustained for at least this
+// long clears the clock. Sized above one management cycle so an isolated bounce tick
+// is tolerated but a genuine multi-tick recovery resets.
+const IN_RANGE_DRAWDOWN_RECOVERY_GRACE_MIN = 15;
+
 function sanitizeStoredText(text, maxLen = MAX_INSTRUCTION_LENGTH) {
   if (text == null) return null;
   const cleaned = String(text)
@@ -99,6 +108,7 @@ export function trackPosition({
     deployed_at: new Date().toISOString(),
     out_of_range_since: null,
     in_range_drawdown_since: null,
+    in_range_drawdown_recovery_since: null,
     last_claim_at: null,
     total_fees_claimed_usd: 0,
     rebalance_count: 0,
@@ -413,6 +423,45 @@ export function isSustainedDrawdownClose({ pnlPct, drawdownExitPct, minutesInDra
 }
 
 /**
+ * Pure transition for the in-range drawdown clock — the timer that feeds
+ * isSustainedDrawdownClose. Given this tick and the existing clock fields,
+ * returns the next `{ since, recoverySince }` (epoch ms, or null = unset).
+ *
+ * Tolerates brief recoveries: a single tick above the floor does NOT clear an
+ * already-running clock — it opens a recovery grace window instead. Only a
+ * recovery sustained for `graceMin` clears the clock. A tick back below the
+ * floor cancels any pending grace and keeps the original start time. This is
+ * what lets the rule survive a choppy in-range bleed (the old hard reset on any
+ * above-floor tick is why it fired 0× across two staging runs).
+ *
+ * @param {object} p
+ * @param {boolean} p.inDrawdown  current tick is in-range AND at/below the floor
+ * @param {number|null} p.since   clock start (epoch ms) or null
+ * @param {number|null} p.recoverySince  recovery-window start (epoch ms) or null
+ * @param {number} p.now          current time (epoch ms)
+ * @param {number} p.graceMin     minutes a recovery must persist to clear the clock
+ */
+export function nextDrawdownClockState({ inDrawdown, since, recoverySince, now, graceMin }) {
+  if (inDrawdown) {
+    // Below the floor: ensure the clock is running and cancel any pending recovery.
+    return { since: since ?? now, recoverySince: null };
+  }
+  if (since == null) {
+    // Above the floor and no clock running — nothing to track.
+    return { since: null, recoverySince: null };
+  }
+  // Above the floor while the clock runs: time the recovery, clear only once sustained.
+  if (recoverySince == null) {
+    return { since, recoverySince: now };
+  }
+  const recoveredMin = Math.floor((now - recoverySince) / 60000);
+  if (recoveredMin >= graceMin) {
+    return { since: null, recoverySince: null };
+  }
+  return { since, recoverySince };
+}
+
+/**
  * Check all exit conditions for a position (trailing TP, stop loss, OOR, low yield).
  * Updates peak_pnl_pct, trailing_active, and OOR state.
  * @param {string} position_address
@@ -462,17 +511,33 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   // Only runs on trustworthy in-range ticks: a confirmed-OOR break is handled
   // faster by the OOR rule, and a suspicious PnL tick is ignored entirely so a
   // bad reading can neither start nor clear the clock.
+  //
+  // The clock tolerates brief recoveries: a single tick back above the floor does
+  // NOT clear it. Only a recovery sustained for IN_RANGE_DRAWDOWN_RECOVERY_GRACE_MIN
+  // resets the timer. Firing still requires the current tick to be at/below the floor
+  // (isSustainedDrawdownClose checks pnlPct <= floor), so a genuine bounce never
+  // triggers an exit while a stale clock winds down.
   if (mgmtConfig.inRangeDrawdownExitEnabled && mgmtConfig.inRangeDrawdownPct != null && !pnl_pct_suspicious) {
     const inDrawdown =
       currentPnlPct != null && in_range !== false && currentPnlPct <= mgmtConfig.inRangeDrawdownPct;
-    if (inDrawdown && !pos.in_range_drawdown_since) {
-      pos.in_range_drawdown_since = new Date().toISOString();
+    const prevSince = pos.in_range_drawdown_since ? new Date(pos.in_range_drawdown_since).getTime() : null;
+    const prevRecovery = pos.in_range_drawdown_recovery_since ? new Date(pos.in_range_drawdown_recovery_since).getTime() : null;
+    const next = nextDrawdownClockState({
+      inDrawdown,
+      since: prevSince,
+      recoverySince: prevRecovery,
+      now: Date.now(),
+      graceMin: IN_RANGE_DRAWDOWN_RECOVERY_GRACE_MIN,
+    });
+    if (next.since !== prevSince || next.recoverySince !== prevRecovery) {
+      if (prevSince == null && next.since != null) {
+        log("state", `Position ${position_address} entered in-range drawdown (PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.inRangeDrawdownPct}%)`);
+      } else if (prevSince != null && next.since == null) {
+        log("state", `Position ${position_address} exited in-range drawdown (sustained recovery >= ${IN_RANGE_DRAWDOWN_RECOVERY_GRACE_MIN}m)`);
+      }
+      pos.in_range_drawdown_since = next.since == null ? null : new Date(next.since).toISOString();
+      pos.in_range_drawdown_recovery_since = next.recoverySince == null ? null : new Date(next.recoverySince).toISOString();
       changed = true;
-      log("state", `Position ${position_address} entered in-range drawdown (PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.inRangeDrawdownPct}%)`);
-    } else if (!inDrawdown && pos.in_range_drawdown_since) {
-      pos.in_range_drawdown_since = null;
-      changed = true;
-      log("state", `Position ${position_address} exited in-range drawdown`);
     }
   }
 
