@@ -423,6 +423,29 @@ export function isSustainedDrawdownClose({ pnlPct, drawdownExitPct, minutesInDra
 }
 
 /**
+ * Pure predicate: is a trailing-TP drop severe enough to skip the 15s whipsaw
+ * recheck and confirm the exit immediately?
+ *
+ * The recheck exists to ignore a marginal drop that bounces straight back. But a
+ * drop that has already given back all gains (current PnL <= 0) or run to
+ * >= severeMult x the trailing target is an unambiguous reversal, not noise —
+ * waiting 15s only lets a fast dump bleed further (cost ~6% on one AIAIAI
+ * position in exp-488b8252, which exited at -3.58% off a +4.13% peak). Returns
+ * false for a marginal drop so the normal recheck still protects the win cases.
+ */
+export function isSevereTrailingDrop({ currentPnlPct, dropFromPeak, trailingDropPct, severeMult = 2 }) {
+  if (currentPnlPct != null && currentPnlPct <= 0) return true;
+  if (
+    dropFromPeak != null &&
+    trailingDropPct != null &&
+    dropFromPeak >= severeMult * trailingDropPct
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Pure transition for the in-range drawdown clock — the timer that feeds
  * isSustainedDrawdownClose. Given this tick and the existing clock fields,
  * returns the next `{ since, recoverySince }` (epoch ms, or null = unset).

@@ -26,7 +26,7 @@ import {
   createLiveMessage,
 } from "./telegram.js";
 import { generateBriefing } from "./briefing.js";
-import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, isLowYieldClose, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
+import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, isLowYieldClose, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop, isSevereTrailingDrop } from "./state.js";
 import { recordPositionSnapshot, addPoolNote } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
@@ -175,6 +175,24 @@ function scheduleTrailingDropConfirmation(positionAddress) {
   _trailingDropConfirmTimers.set(positionAddress, timer);
 }
 
+/**
+ * Confirm a trailing-drop exit synchronously (no 15s recheck), used when the drop
+ * is a severe, unambiguous reversal (see isSevereTrailingDrop). Reuses the same
+ * queue+resolve path the timer uses, passing the detection-tick PnL as the
+ * recheck value so it confirms immediately. Returns true once the confirmed-exit
+ * state is set, so the next management cycle closes the position.
+ */
+function confirmTrailingDropNow(positionAddress, exit) {
+  queueTrailingDropConfirmation(positionAddress, exit.peak_pnl_pct, exit.current_pnl_pct, config.management.trailingDropPct);
+  const resolved = resolvePendingTrailingDrop(
+    positionAddress,
+    exit.current_pnl_pct,
+    config.management.trailingDropPct,
+    TRAILING_DROP_CONFIRM_TOLERANCE_PCT,
+  );
+  return !!resolved?.confirmed;
+}
+
 async function runBriefing() {
   log("cron", "Starting morning briefing");
   try {
@@ -257,6 +275,20 @@ export async function runManagementCycle({ silent = false } = {}) {
       const exit = updatePnlAndCheckExits(p.position, p, config.management);
       if (exit) {
         if (exit.action === "TRAILING_TP" && exit.needs_confirmation && shouldUsePnlRecheck()) {
+          // Severe drop = unambiguous reversal: confirm now and close this cycle,
+          // skipping the 15s recheck. Marginal drops keep the recheck.
+          if (
+            isSevereTrailingDrop({
+              currentPnlPct: exit.current_pnl_pct,
+              dropFromPeak: exit.drop_from_peak_pct,
+              trailingDropPct: config.management.trailingDropPct,
+            }) &&
+            confirmTrailingDropNow(p.position, exit)
+          ) {
+            exitMap.set(p.position, exit.reason);
+            log("state", `Exit alert for ${p.pair}: ${exit.reason} (severe trailing drop, no recheck)`);
+            continue;
+          }
           if (queueTrailingDropConfirmation(p.position, exit.peak_pnl_pct, exit.current_pnl_pct, config.management.trailingDropPct)) {
             scheduleTrailingDropConfirmation(p.position);
           }
@@ -747,6 +779,23 @@ export function startCronJobs() {
         const exit = updatePnlAndCheckExits(p.position, p, config.management);
         if (exit) {
           if (exit.action === "TRAILING_TP" && exit.needs_confirmation && shouldUsePnlRecheck()) {
+            // Severe drop (gains given back, or drop >= 2x target) = unambiguous
+            // reversal: confirm now and trigger management immediately, bypassing
+            // both the 15s recheck and the cooldown so a fast dump can't keep
+            // bleeding. Marginal drops keep the recheck (whipsaw protection).
+            if (
+              isSevereTrailingDrop({
+                currentPnlPct: exit.current_pnl_pct,
+                dropFromPeak: exit.drop_from_peak_pct,
+                trailingDropPct: config.management.trailingDropPct,
+              }) &&
+              confirmTrailingDropNow(p.position, exit)
+            ) {
+              _pollTriggeredAt = Date.now();
+              log("state", `[PnL poll] Trailing TP severe drop (no recheck): ${p.pair} — ${exit.reason} — triggering management immediately`);
+              runManagementCycle({ silent: true }).catch((e) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
+              break;
+            }
             if (queueTrailingDropConfirmation(p.position, exit.peak_pnl_pct, exit.current_pnl_pct, config.management.trailingDropPct)) {
               scheduleTrailingDropConfirmation(p.position);
             }
