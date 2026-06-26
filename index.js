@@ -702,7 +702,8 @@ export function startCronJobs() {
     await maybeRunMissedBriefing();
   }, { timezone: 'UTC' });
 
-  // Lightweight 30s PnL poller — updates trailing TP state between management cycles, no LLM
+  // Lightweight 20s PnL poller — updates trailing TP state between management cycles, no LLM.
+  // A hard stop loss is handled on a dedicated fast path that bypasses the trigger cooldown.
   let _pnlPollBusy = false;
   const pnlPollInterval = setInterval(async () => {
     if (_managementBusy || _screeningBusy || _pnlPollBusy) return;
@@ -711,6 +712,30 @@ export function startCronJobs() {
     try {
       const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
       if (!result?.positions?.length) return;
+
+      // ── Urgent: hard stop loss fires immediately ──────────────────
+      // The hard stop is the only reliable cap on fast in-range bleeds, which can
+      // cross the threshold within a single management cycle. Trigger management
+      // the moment any position breaches stopLossPct, bypassing the poller's
+      // management-trigger cooldown — a slow non-urgent exit elsewhere (or a recent
+      // poll-triggered cycle) must never delay a stop loss. Scanning all positions
+      // here also stops the per-position `break` below from masking a stop loss
+      // behind an earlier position's non-urgent exit. Guard matches the STOP_LOSS
+      // check in updatePnlAndCheckExits (skip suspicious PnL ticks).
+      const slPct = config.management.stopLossPct;
+      const stopLossHit =
+        slPct != null
+          ? result.positions.find(
+              (p) => !p.pnl_pct_suspicious && p.pnl_pct != null && p.pnl_pct <= slPct,
+            )
+          : null;
+      if (stopLossHit) {
+        _pollTriggeredAt = Date.now();
+        log("state", `[PnL poll] STOP LOSS: ${stopLossHit.pair} ${stopLossHit.pnl_pct.toFixed(2)}% <= ${slPct}% — triggering management immediately`);
+        runManagementCycle({ silent: true }).catch((e) => log("cron_error", `Stop-loss poll management failed: ${e.message}`));
+        return;
+      }
+
       for (const p of result.positions) {
         if (
           !p.pnl_pct_suspicious &&
@@ -755,7 +780,7 @@ export function startCronJobs() {
     } finally {
       _pnlPollBusy = false;
     }
-  }, 30_000);
+  }, 20_000);
 
   _cronTasks = [mgmtTask, screenTask, healthTask, briefingTask, briefingWatchdog];
   // Store interval ref so stopCronJobs can clear it

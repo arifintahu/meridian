@@ -171,12 +171,12 @@ Cron tasks created by `startCronJobs()`:
 | Health check | `0 * * * *` | One-shot `agentLoop` as MANAGER with health summary goal |
 | Briefing | `0 1 * * *` (UTC) | `runBriefing()` — 8 AM Jakarta |
 | Briefing watchdog | `0 */6 * * *` (UTC) | `maybeRunMissedBriefing()` — fires on startup if missed |
-| **PnL poller** | every 30s (`setInterval`) | Trailing-TP detection between management cycles (below) |
+| **PnL poller** | every 20s (`setInterval`) | Trailing-TP detection + **hard stop-loss fast path** between management cycles (below) |
 
 **Race condition guards** (all in `index.js`):
 - `_managementBusy` / `_screeningBusy` flags prevent overlap.
 - `_screeningLastTriggered` (epoch ms) prevents management from spamming screening.
-- `_pollTriggeredAt` cooldown equal to `managementIntervalMin` to avoid PnL-poller double-triggering.
+- `_pollTriggeredAt` cooldown equal to `managementIntervalMin` to avoid PnL-poller double-triggering. **Exception:** a hard stop loss (any position `pnl_pct <= stopLossPct`, suspicious ticks skipped) triggers management immediately via a dedicated pre-scan at the top of the poller, bypassing this cooldown and the per-position `break` — fast in-range bleeds can cross the threshold within one management cycle, so the stop must not wait on the cooldown.
 - `deploy_position` safety check uses `force: true` on `getMyPositions()` for a fresh position count.
 
 ### The hybrid management cycle (deterministic + LLM)
