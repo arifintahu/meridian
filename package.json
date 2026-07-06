@@ -19,7 +19,7 @@
     "test:syntax": "find . -path ./node_modules -prune -o -name '*.js' -exec node --check {} \\;",
     "test:screen": "node test/test-screening.js",
     "test:experiment": "node --test test/experiment/db.test.js test/experiment/recorder.test.js",
-    "test:unit": "node --test test/dry-run-pnl.test.js test/config-snapshot.test.js test/low-yield-gate.test.js test/instruction-parser.test.js test/reports.test.js test/fetch-timeout.test.js test/in-range-drawdown.test.js test/severe-trailing-drop.test.js",
+    "test:unit": "node --test test/dry-run-pnl.test.js test/config-snapshot.test.js test/low-yield-gate.test.js test/instruction-parser.test.js test/reports.test.js test/fetch-timeout.test.js test/in-range-drawdown.test.js test/severe-trailing-drop.test.js test/max-volatility-filter.test.js",
     "pg:up": "docker compose up -d",
     "pg:down": "docker compose down",
     "pg:migrate": "node scripts/pg-migrate.js",
