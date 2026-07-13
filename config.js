@@ -124,8 +124,15 @@ export const config = {
     // deployAmountSol (the existing deploy-safety floor).
     volatilitySizedDeployEnabled: u.volatilitySizedDeployEnabled ?? true,
     volatilitySizeFloor:   u.volatilitySizeFloor   ?? 0.5, // min size fraction at maxVolatility
-    // Trailing take-profit
-    trailingTakeProfit:    u.trailingTakeProfit    ?? true,
+    // In-place upside rebalancing — supersedes trailingTakeProfit (harvest-on-rebalance
+    // replaces it) and covers the "let winners run" case OOR/pumped-far-above-range used
+    // to close prematurely on. Upside-only; downside breaks are unaffected.
+    rebalanceOnUpsideBreakEnabled: u.rebalanceOnUpsideBreakEnabled ?? true,
+    rebalanceMaxCount:      u.rebalanceMaxCount      ?? 5,     // operational cap per position
+    rebalanceHarvestTriggerPct: u.rebalanceHarvestTriggerPct ?? 10, // cumulative PnL% that triggers a harvest
+    rebalanceHarvestBps:    u.rebalanceHarvestBps    ?? 5000,  // 50% withdrawn as realized profit per harvest
+    // Trailing take-profit — superseded by rebalance harvest-on-pump; default off.
+    trailingTakeProfit:    u.trailingTakeProfit    ?? false,
     trailingTriggerPct:    u.trailingTriggerPct    ?? 3,    // activate trailing at X% PnL
     trailingDropPct:       u.trailingDropPct       ?? 1.5,  // close when drops X% from peak
     pnlSanityMaxDiffPct:   u.pnlSanityMaxDiffPct   ?? 5,    // max allowed diff between reported and derived pnl % before ignoring a tick
