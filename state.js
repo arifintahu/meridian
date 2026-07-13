@@ -112,6 +112,9 @@ export function trackPosition({
     last_claim_at: null,
     total_fees_claimed_usd: 0,
     rebalance_count: 0,
+    last_rebalance_at: null,
+    harvested_sol: 0,
+    original_amount_sol: amount_sol,
     closed: false,
     closed_at: null,
     notes: [],
@@ -209,6 +212,43 @@ export function recordClose(position_address, reason) {
   pushEvent(state, { action: "close", position: position_address, pool_name: pos.pool_name || pos.pool, reason });
   save(state);
   log("state", `Position ${position_address} marked closed: ${reason}`);
+}
+
+/**
+ * Pure predicate: is this position eligible for in-place upside rebalancing
+ * instead of a close? Upside-only (price above the range) — downside breaks
+ * are handled by the existing close rules unchanged.
+ */
+export function isUpsideRebalanceEligible({ activeBin, upperBin, rebalanceCount, rebalanceMaxCount, enabled }) {
+  if (!enabled) return false;
+  if (activeBin == null || upperBin == null) return false;
+  if (!(activeBin > upperBin)) return false;
+  const count = Number.isFinite(rebalanceCount) ? rebalanceCount : 0;
+  const max = Number.isFinite(rebalanceMaxCount) ? rebalanceMaxCount : 0;
+  return count < max;
+}
+
+/**
+ * Record an in-place rebalance: bumps rebalance_count, replaces the tracked
+ * bin range and working capital with the new leg, and accumulates harvested
+ * profit (SOL-denominated — see field docs). Does NOT reset
+ * original_amount_sol — cumulative PnL keeps being measured against the
+ * position's true original capital.
+ */
+export function recordRebalance(position_address, { newBinRange, newAmountSol, harvestedSol = 0, compoundedSol = 0 }) {
+  const state = load();
+  const pos = state.positions[position_address];
+  if (!pos) return;
+  pos.rebalance_count = (pos.rebalance_count || 0) + 1;
+  pos.last_rebalance_at = new Date().toISOString();
+  pos.bin_range = newBinRange;
+  pos.active_bin_at_deploy = newBinRange.max;
+  pos.amount_sol = newAmountSol;
+  pos.harvested_sol = (pos.harvested_sol || 0) + harvestedSol;
+  pos.notes.push(`Rebalanced (#${pos.rebalance_count}) at ${pos.last_rebalance_at}: harvested ${harvestedSol.toFixed(4)} SOL, compounded ${compoundedSol.toFixed(4)} SOL`);
+  pushEvent(state, { action: "rebalance", position: position_address, pool_name: pos.pool_name || pos.pool, harvestedSol, compoundedSol });
+  save(state);
+  log("state", `Position ${position_address} rebalanced (#${pos.rebalance_count}): range ${JSON.stringify(newBinRange)}`);
 }
 
 /**
