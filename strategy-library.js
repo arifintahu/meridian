@@ -57,7 +57,7 @@ const DEFAULT_STRATEGIES = {
     token_criteria: { notes: "Stable volume pools with consistent fee generation." },
     entry: { condition: "Deploy normally with any shape", notes: "Strategy is about management, not entry shape." },
     range: { type: "default", notes: "Standard range for the pair." },
-    exit: { notes: "When unclaimed fees > $5 AND in range: claim_fees → add_liquidity back into same position. Normal close rules otherwise." },
+    exit: { notes: "Handled automatically by the deterministic management cycle: on an upside out-of-range break, rebalance_position compounds accrued fees back into the same position (compound_fees=true) as part of the range shift. Normal close rules otherwise." },
     best_for: "Maximizing yield on stable, range-bound pools via compounding",
   },
   multi_layer: {
@@ -87,7 +87,7 @@ const DEFAULT_STRATEGIES = {
     token_criteria: { notes: "High fee pools where taking profit incrementally is preferred." },
     entry: { condition: "Deploy normally", notes: "Strategy is about progressive profit-taking, not entry." },
     range: { type: "default", notes: "Standard range." },
-    exit: { take_profit_pct: 10, notes: "When total return >= 10% of deployed capital: withdraw_liquidity(bps=5000) to take 50% off. Remaining 50% keeps running. Repeat at next threshold." },
+    exit: { take_profit_pct: 10, notes: "Handled automatically by the deterministic management cycle: on an upside out-of-range break with cumulative PnL >= rebalanceHarvestTriggerPct (default 10%), rebalance_position withdraws rebalanceHarvestBps (default 50%) as realized profit while shifting the range. Remainder keeps running under the same rebalance/stop-loss rules. Repeats at the next threshold, up to rebalanceMaxCount rebalances." },
     best_for: "Locking in profits without fully exiting winning positions",
   },
 };
