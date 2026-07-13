@@ -248,6 +248,7 @@ const { values: flags } = parseArgs({
     "amount-x":   { type: "string" },
     "amount-y":   { type: "string" },
     "bps":        { type: "string" },
+    "withdraw-bps": { type: "string" },
     "no-claim":   { type: "boolean" },
     "skip-swap":  { type: "boolean" },
     "dry-run":    { type: "boolean" },
