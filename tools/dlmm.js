@@ -2350,9 +2350,10 @@ export async function rebalancePosition({ position_address, new_bins_below, new_
 
     const legValueSol = sim.position_value_sol;
     const compoundedSol = compound_fees ? sim.fees_sol : 0;
+    const uncompoundedFeesSol = compound_fees ? 0 : sim.fees_sol;
     const preHarvestValueSol = legValueSol + compoundedSol;
-    const harvestedSol = (Number(withdraw_bps) / 10000) * preHarvestValueSol;
-    const newAmountSol = Math.max(0, preHarvestValueSol - harvestedSol);
+    const harvestedSol = ((Number(withdraw_bps) / 10000) * preHarvestValueSol) + uncompoundedFeesSol;
+    const newAmountSol = Math.max(0, preHarvestValueSol - ((Number(withdraw_bps) / 10000) * preHarvestValueSol));
 
     const newActiveBin = currentBinId;
     const newBinRange = { min: newActiveBin - new_bins_below, max: newActiveBin + new_bins_above };
@@ -2397,10 +2398,19 @@ export async function rebalancePosition({ position_address, new_bins_below, new_
     };
     const strategyType = strategyMap[tracked.strategy] ?? StrategyType.BidAsk;
 
-    // positionData.feeX/feeY are the pending accrued fees, per-token. Compounding
-    // folds both back in as top-up deposits instead of leaving them claimed-to-wallet.
-    const topUpAmountX = compound_fees ? positionData.feeX : new BN(0);
-    const topUpAmountY = compound_fees ? positionData.feeY : new BN(0);
+    // Not positionData.feeX/feeY — the SDK's rebalance flow (RebalancePosition.create with
+    // shouldClaimFee: true, hardcoded internally) always withdraws the position's full principal
+    // plus accrued fees at 100% bps, then automatically redeposits (principal + fees) x
+    // (1 - yWithdrawBps/10000) as the new position. Accrued fees are compounded back in for free
+    // whenever yWithdrawBps doesn't withdraw them away — passing feeX/feeY as an ADDITIONAL top-up
+    // on top of that double-counts the fee amount and silently pulls extra real SOL from the wallet
+    // on every rebalance. topUpAmountX/Y are reserved for genuinely new external capital, which this
+    // primitive never adds. compound_fees has no effect on live on-chain behavior (fees always
+    // compound automatically here, unconditionally) — it only affects the DRY_RUN branch's simulated
+    // model, which is free to model a distinct "claim to wallet, don't compound" approximation that
+    // this SDK doesn't actually offer for live rebalances.
+    const topUpAmountX = new BN(0);
+    const topUpAmountY = new BN(0);
     const xWithdrawBps = new BN(0);
     const yWithdrawBps = new BN(Math.max(0, Math.round(Number(withdraw_bps) || 0)));
 
@@ -2432,9 +2442,14 @@ export async function rebalancePosition({ position_address, new_bins_below, new_
     const newMaxBinId = activeBin.binId + new_bins_above;
 
     const harvestedSol = rebalanceResponse.simulationResult.actualAmountYWithdrawn.toNumber() / 1e9;
-    const compoundedSol = rebalanceResponse.simulationResult.actualAmountYDeposited.toNumber() / 1e9;
-    const preRebalanceYSol = Number(positionData.totalYAmount) / 1e9;
-    const newAmountSol = Math.max(0, preRebalanceYSol - harvestedSol + compoundedSol);
+    // Now that topUpAmountY is always 0, actualAmountYDeposited will be ~0 (no external capital is
+    // ever added) — it no longer represents "compounded fees," so don't use it for that. The fee
+    // portion actually retained in the new position (auto-compounded by the SDK) is computed
+    // directly from positionData.feeY, independent of the now-unused deposit figure.
+    const feeYSol = Number(positionData.feeY) / 1e9;
+    const compoundedSol = Math.max(0, feeYSol * (10000 - Number(withdraw_bps || 0)) / 10000);
+    const preRebalanceYSol = (Number(positionData.totalYAmount) + Number(positionData.feeY)) / 1e9;
+    const newAmountSol = Math.max(0, preRebalanceYSol - harvestedSol);
 
     _positionsCacheAt = 0;
     recordRebalance(position_address, {
