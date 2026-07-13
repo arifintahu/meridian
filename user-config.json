@@ -56,7 +56,7 @@
   "repeatDeployCooldownMinFeeEarnedPct": 0,
   "minVolumeToRebalance": 1000,
   "stopLossPct": -6,
-  "takeProfitPct": 5,
+  "takeProfitPct": 20,
   "minFeePerTvl24h": 7,
   "minAgeBeforeYieldCheck": 60,
   "inRangeDrawdownExitEnabled": false,

@@ -2310,6 +2310,20 @@ export async function closePosition({ position_address, reason }) {
 }
 
 // ─── Rebalance Position (in-place, upside-only) ─────────────────
+// Pure value-split math for the DRY_RUN rebalance branch — no I/O, no clock.
+// Splits a leg's mark-to-market value (+ fees) into what gets harvested out to the
+// wallet vs. what stays deployed in the new leg. Conserves value: harvestedSol +
+// newAmountSol === legValueSol + feesSol, regardless of compoundFees.
+export function computeRebalanceValueSplit({ legValueSol, feesSol, compoundFees, withdrawBps }) {
+  const compoundedSol = compoundFees ? feesSol : 0;
+  const uncompoundedFeesSol = compoundFees ? 0 : feesSol;
+  const preHarvestValueSol = legValueSol + compoundedSol;
+  const withdrawFrac = Number(withdrawBps) / 10000;
+  const harvestedSol = (withdrawFrac * preHarvestValueSol) + uncompoundedFeesSol;
+  const newAmountSol = Math.max(0, preHarvestValueSol - (withdrawFrac * preHarvestValueSol));
+  return { harvestedSol, compoundedSol, newAmountSol };
+}
+
 export async function rebalancePosition({ position_address, new_bins_below, new_bins_above = 0, withdraw_bps = 0, compound_fees = true }) {
   position_address = normalizeMint(position_address);
   const tracked = getTrackedPosition(position_address);
@@ -2349,11 +2363,12 @@ export async function rebalancePosition({ position_address, new_bins_below, new_
     });
 
     const legValueSol = sim.position_value_sol;
-    const compoundedSol = compound_fees ? sim.fees_sol : 0;
-    const uncompoundedFeesSol = compound_fees ? 0 : sim.fees_sol;
-    const preHarvestValueSol = legValueSol + compoundedSol;
-    const harvestedSol = ((Number(withdraw_bps) / 10000) * preHarvestValueSol) + uncompoundedFeesSol;
-    const newAmountSol = Math.max(0, preHarvestValueSol - ((Number(withdraw_bps) / 10000) * preHarvestValueSol));
+    const { harvestedSol, compoundedSol, newAmountSol } = computeRebalanceValueSplit({
+      legValueSol,
+      feesSol: sim.fees_sol,
+      compoundFees: compound_fees,
+      withdrawBps: withdraw_bps,
+    });
 
     const newActiveBin = currentBinId;
     const newBinRange = { min: newActiveBin - new_bins_below, max: newActiveBin + new_bins_above };

@@ -828,14 +828,15 @@ export function startCronJobs() {
         }
         const closeRule = getDeterministicCloseRule(p, config.management);
         if (closeRule) {
+          const ruleDesc = closeRule.action === "REBALANCE" ? "REBALANCE" : `Rule ${closeRule.rule}: ${closeRule.reason}`;
           const cooldownMs = config.schedule.managementIntervalMin * 60 * 1000;
           const sinceLastTrigger = Date.now() - _pollTriggeredAt;
           if (sinceLastTrigger >= cooldownMs) {
             _pollTriggeredAt = Date.now();
-            log("state", `[PnL poll] Deterministic close rule: ${p.pair} — Rule ${closeRule.rule}: ${closeRule.reason} — triggering management`);
+            log("state", `[PnL poll] Deterministic close rule: ${p.pair} — ${ruleDesc} — triggering management`);
             runManagementCycle({ silent: true }).catch((e) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
           } else {
-            log("state", `[PnL poll] Deterministic close rule: ${p.pair} — Rule ${closeRule.rule}: ${closeRule.reason} — cooldown (${Math.round((cooldownMs - sinceLastTrigger) / 1000)}s left)`);
+            log("state", `[PnL poll] Deterministic close rule: ${p.pair} — ${ruleDesc} — cooldown (${Math.round((cooldownMs - sinceLastTrigger) / 1000)}s left)`);
           }
           break;
         }
@@ -949,7 +950,8 @@ function getDeterministicCloseRule(position, managementConfig) {
       enabled: managementConfig.rebalanceOnUpsideBreakEnabled,
     })
   ) {
-    const volatilityForRange = tracked?.volatility ?? position.volatility ?? 3;
+    const rawVolatility = tracked?.volatility ?? position.volatility;
+    const volatilityForRange = Number.isFinite(rawVolatility) && rawVolatility > 0 ? rawVolatility : 3;
     const harvestEligible = position.pnl_pct != null && position.pnl_pct >= managementConfig.rebalanceHarvestTriggerPct;
     return {
       action: "REBALANCE",
