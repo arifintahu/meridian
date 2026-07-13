@@ -106,17 +106,27 @@ describe('simulateDryRunPnl — cumulative PnL across rebalances', () => {
     binStep: 100, strategy: 'bid_ask', feePerTvl24h: 0, minutesInRange: 0, solPrice: 100,
   };
 
-  it('without originalAmountSol/harvestedSol, behavior is identical to today (backward compatible)', () => {
-    const withDefaults = simulateDryRunPnl({ ...base, currentActiveBin: 0 });
-    const withoutNewParams = simulateDryRunPnl({ ...base, currentActiveBin: 0, originalAmountSol: null, harvestedSol: 0 });
-    assert.equal(withDefaults.pnl_pct, withoutNewParams.pnl_pct);
+  it('without originalAmountSol/harvestedSol, denom/numerator reduce to the pre-rebalance-support formula', () => {
+    // Reconstructs the exact formula simulateDryRunPnl used BEFORE this task (denom = amount,
+    // numerator = pricePnlSol + feesSol, no harvested term) as an independent reference — computed
+    // locally from base.amountSol and the returned breakdown fields, not by calling production code
+    // for the denom/numerator logic — so this proves the new code path collapses to the old one
+    // rather than just comparing two calls to the new function against each other.
+    const r = simulateDryRunPnl({ ...base, currentActiveBin: -5 });
+    const oldStyleDenom = base.amountSol > 0 ? base.amountSol : 1;
+    const oldStylePnlPct = (r.price_pnl_sol + r.fees_sol) / oldStyleDenom * 100;
+    assert.ok(Math.abs(r.pnl_pct - oldStylePnlPct) < 1e-6);
   });
 
   it('cumulative PnL is measured against originalAmountSol, not the current leg amount', () => {
     // Leg 2 only has 0.5 SOL deployed (post-harvest), but original capital was 1 SOL.
-    const r = simulateDryRunPnl({ ...base, amountSol: 0.5, currentActiveBin: 0, originalAmountSol: 1, harvestedSol: 0 });
-    // price PnL is ~0 (active bin == deploy bin), so pnl_pct should be ~0% of the ORIGINAL 1 SOL, not 0.5.
-    assert.ok(Math.abs(r.pnl_pct) < 1e-6);
+    // currentActiveBin is below deploy so pricePnlSol is genuinely nonzero — this makes the
+    // denominator choice (amountSol vs originalAmountSol) actually observable: a bug that used
+    // amountSol instead of originalAmountSol would produce the SAME pnl_pct as withoutOriginal,
+    // not half of it.
+    const withOriginal = simulateDryRunPnl({ ...base, amountSol: 0.5, currentActiveBin: -5, originalAmountSol: 1, harvestedSol: 0 });
+    const withoutOriginal = simulateDryRunPnl({ ...base, amountSol: 0.5, currentActiveBin: -5 });
+    assert.ok(Math.abs(withOriginal.pnl_pct - withoutOriginal.pnl_pct / 2) < 1e-6);
   });
 
   it('harvestedSol counts as realized profit toward cumulative PnL', () => {
