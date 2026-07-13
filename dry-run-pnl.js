@@ -42,8 +42,11 @@ export function binWeight(b, D, L, U, strategy) {
  *                                             cumulative PnL across rebalances.
  *                                             null/omitted → falls back to amountSol
  *                                             (identical to pre-rebalance-support behavior).
- * @param {number} [p.harvestedSol]     SOL already realized via partial harvests,
- *                                       added to cumulative PnL. Default 0.
+ * @param {number} [p.harvestedSol]     Cumulative SOL ever withdrawn via partial harvests.
+ *                                       This is a PROPORTIONAL slice of principal + profit
+ *                                       combined (matches Meteora's on-chain rebalance
+ *                                       semantics), not profit-isolated — see pnlSol below
+ *                                       for how that's reconciled. Default 0.
  * @returns {{pnl_pct:number, pnl_usd:number, fees_earned_usd:number,
  *            position_value_sol:number, price_pnl_sol:number, fees_sol:number}}
  */
@@ -99,11 +102,21 @@ export function simulateDryRunPnl({
   const feesSol = amount * (feePct / 100) * (inRangeMin / 1440);
 
   const harvested = Number.isFinite(harvestedSol) ? harvestedSol : 0;
-  const pnlSol = pricePnlSol + feesSol + harvested;
-  const px = Number.isFinite(solPrice) ? solPrice : 0;
   const denom = (Number.isFinite(originalAmountSol) && originalAmountSol > 0)
     ? originalAmountSol
     : (amount > 0 ? amount : 1);
+  // Cumulative PnL = (current leg's total value + everything ever withdrawn) - original capital,
+  // all divided by original capital. `amount + pricePnlSol + feesSol` is the current leg's
+  // mark-to-market value (leg start + price move + fees); `harvested` is the FULL amount ever
+  // withdrawn via partial harvests (principal + profit combined, not profit-isolated — matches
+  // how rebalancePosition/recordRebalance actually compute and store it). Subtracting the
+  // original capital baseline at the end (not folding it into `denom` alone) is what makes this
+  // correct across multiple rebalances: `amount` drifts upward with every compound and downward
+  // with every harvest, and this formula reconciles that drift instead of assuming `amount` stays
+  // pinned at `originalAmountSol` forever (which is what the pre-fix formula implicitly assumed,
+  // and why it broke after any rebalance).
+  const pnlSol = (amount + pricePnlSol + feesSol + harvested) - denom;
+  const px = Number.isFinite(solPrice) ? solPrice : 0;
 
   return {
     pnl_pct: (pnlSol / denom) * 100,

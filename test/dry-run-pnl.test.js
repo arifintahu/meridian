@@ -118,26 +118,67 @@ describe('simulateDryRunPnl — cumulative PnL across rebalances', () => {
     assert.ok(Math.abs(r.pnl_pct - oldStylePnlPct) < 1e-6);
   });
 
-  it('cumulative PnL is measured against originalAmountSol, not the current leg amount', () => {
-    // Leg 2 only has 0.5 SOL deployed (post-harvest), but original capital was 1 SOL.
-    // currentActiveBin is below deploy so pricePnlSol is genuinely nonzero — this makes the
-    // denominator choice (amountSol vs originalAmountSol) actually observable: a bug that used
-    // amountSol instead of originalAmountSol would produce the SAME pnl_pct as withoutOriginal,
-    // not half of it.
-    const withOriginal = simulateDryRunPnl({ ...base, amountSol: 0.5, currentActiveBin: -5, originalAmountSol: 1, harvestedSol: 0 });
-    const withoutOriginal = simulateDryRunPnl({ ...base, amountSol: 0.5, currentActiveBin: -5 });
-    assert.ok(Math.abs(withOriginal.pnl_pct - withoutOriginal.pnl_pct / 2) < 1e-6);
+  it('harvesting half the leg value preserves total cumulative value (no principal/profit double-count)', () => {
+    // Leg 1: currentActiveBin -5 (below deploy D=0) gives the leg a genuinely nonzero price PnL
+    // — some liquidity has converted to the base token and is marked at the lower current price.
+    // No originalAmountSol/harvestedSol passed, so this is leg 1's own (first-entry) cumulative PnL.
+    const leg1 = simulateDryRunPnl({ ...base, currentActiveBin: -5 });
+    const leg1Amount = base.amountSol;
+    const leg1TotalValue = leg1Amount + leg1.price_pnl_sol + leg1.fees_sol;
+
+    // A real 50%-harvest rebalance splits the leg's total mark-to-market value: half is
+    // withdrawn (harvestedSol), half is redeposited as the new leg's starting amount — this
+    // mirrors rebalancePosition's newAmountSol/harvestedSol split in tools/dlmm.js, which is
+    // itself a proportional (principal+profit) split, matching Meteora's on-chain semantics.
+    const newAmount = leg1TotalValue * 0.5;
+    const harvestedSol = leg1TotalValue * 0.5;
+
+    // Leg 2 is checked immediately after the harvest — no further price movement (currentActiveBin
+    // held at leg 1's deploy bin) — so leg 2's own price PnL/fees are 0 and the only cumulative
+    // inputs are the carried-forward amount plus harvestedSol.
+    const leg2 = simulateDryRunPnl({
+      ...base,
+      amountSol: newAmount,
+      originalAmountSol: leg1Amount,
+      harvestedSol,
+      currentActiveBin: base.activeBinAtDeploy,
+    });
+
+    // A harvest just moves value from "in the leg" to "withdrawn" — total cumulative PnL must
+    // be unchanged (money that was already there doesn't vanish, and no new money appears).
+    assert.ok(Math.abs(leg2.pnl_pct - leg1.pnl_pct) < 1e-6);
   });
 
-  it('harvestedSol counts as realized profit toward cumulative PnL', () => {
-    const r = simulateDryRunPnl({ ...base, amountSol: 0.5, currentActiveBin: 0, originalAmountSol: 1, harvestedSol: 0.1 });
-    // 0.1 SOL harvested / 1 SOL original = +10%
-    assert.ok(Math.abs(r.pnl_pct - 10) < 1e-6);
+  it('compounding the full leg value back in preserves cumulative PnL (no reset toward 0%)', () => {
+    // Same leg-1 setup as the harvest test above.
+    const leg1 = simulateDryRunPnl({ ...base, currentActiveBin: -5 });
+    const leg1Amount = base.amountSol;
+    const leg1TotalValue = leg1Amount + leg1.price_pnl_sol + leg1.fees_sol;
+
+    // Pure compound: nothing withdrawn — the entire leg value becomes the new leg's amount.
+    const newAmount = leg1TotalValue;
+    const harvestedSol = 0;
+
+    const leg2 = simulateDryRunPnl({
+      ...base,
+      amountSol: newAmount,
+      originalAmountSol: leg1Amount,
+      harvestedSol,
+      currentActiveBin: base.activeBinAtDeploy,
+    });
+
+    // Under the OLD formula (pnlSol = pricePnlSol + feesSol + harvested, both 0 for leg 2) this
+    // would read ~0% regardless of leg 1's real gain/loss — the "reset to zero" bug. The new
+    // formula must still report leg 1's cumulative PnL unchanged.
+    assert.ok(Math.abs(leg2.pnl_pct - leg1.pnl_pct) < 1e-6);
   });
 
   it('a harvested amount cannot mask a real loss on the remaining leg', () => {
-    // remaining leg dumped hard (currentActiveBin far below range), harvested a small amount earlier
-    const r = simulateDryRunPnl({ ...base, amountSol: 0.5, currentActiveBin: -20, originalAmountSol: 1, harvestedSol: 0.05 });
+    // Plausible post-harvest leg-2 state: original capital 1 SOL, leg 2 carries 0.45 SOL,
+    // a small 0.05 SOL harvest happened earlier — then the remaining leg dumps hard
+    // (currentActiveBin far below range). The big loss on the live leg must dominate the
+    // small prior harvest.
+    const r = simulateDryRunPnl({ ...base, amountSol: 0.45, currentActiveBin: -20, originalAmountSol: 1, harvestedSol: 0.05 });
     assert.ok(r.pnl_pct < 0);
   });
 });
