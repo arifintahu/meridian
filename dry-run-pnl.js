@@ -38,6 +38,12 @@ export function binWeight(b, D, L, U, strategy) {
  *                                       same units as the LOW_YIELD rule. null → 0 fees.
  * @param {number} [p.minutesInRange]
  * @param {number} [p.solPrice]         USD per SOL (0 → USD fields 0)
+ * @param {number|null} [p.originalAmountSol] Original capital at first entry, for
+ *                                             cumulative PnL across rebalances.
+ *                                             null/omitted → falls back to amountSol
+ *                                             (identical to pre-rebalance-support behavior).
+ * @param {number} [p.harvestedSol]     SOL already realized via partial harvests,
+ *                                       added to cumulative PnL. Default 0.
  * @returns {{pnl_pct:number, pnl_usd:number, fees_earned_usd:number,
  *            position_value_sol:number, price_pnl_sol:number, fees_sol:number}}
  */
@@ -51,6 +57,8 @@ export function simulateDryRunPnl({
   feePerTvl24h = null,
   minutesInRange = 0,
   solPrice = 0,
+  originalAmountSol = null,
+  harvestedSol = 0,
 }) {
   const L = binRange?.min;
   const U = binRange?.max;
@@ -90,9 +98,12 @@ export function simulateDryRunPnl({
   const inRangeMin = Math.max(0, Number.isFinite(minutesInRange) ? minutesInRange : 0);
   const feesSol = amount * (feePct / 100) * (inRangeMin / 1440);
 
-  const pnlSol = pricePnlSol + feesSol;
+  const harvested = Number.isFinite(harvestedSol) ? harvestedSol : 0;
+  const pnlSol = pricePnlSol + feesSol + harvested;
   const px = Number.isFinite(solPrice) ? solPrice : 0;
-  const denom = amount > 0 ? amount : 1;
+  const denom = (Number.isFinite(originalAmountSol) && originalAmountSol > 0)
+    ? originalAmountSol
+    : (amount > 0 ? amount : 1);
 
   return {
     pnl_pct: (pnlSol / denom) * 100,

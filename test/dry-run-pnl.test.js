@@ -99,3 +99,35 @@ describe('simulateDryRunPnl — guards', () => {
     assert.ok(r.price_pnl_sol < 0);
   });
 });
+
+describe('simulateDryRunPnl — cumulative PnL across rebalances', () => {
+  const base = {
+    amountSol: 1, binRange: { min: -10, max: 0 }, activeBinAtDeploy: 0,
+    binStep: 100, strategy: 'bid_ask', feePerTvl24h: 0, minutesInRange: 0, solPrice: 100,
+  };
+
+  it('without originalAmountSol/harvestedSol, behavior is identical to today (backward compatible)', () => {
+    const withDefaults = simulateDryRunPnl({ ...base, currentActiveBin: 0 });
+    const withoutNewParams = simulateDryRunPnl({ ...base, currentActiveBin: 0, originalAmountSol: null, harvestedSol: 0 });
+    assert.equal(withDefaults.pnl_pct, withoutNewParams.pnl_pct);
+  });
+
+  it('cumulative PnL is measured against originalAmountSol, not the current leg amount', () => {
+    // Leg 2 only has 0.5 SOL deployed (post-harvest), but original capital was 1 SOL.
+    const r = simulateDryRunPnl({ ...base, amountSol: 0.5, currentActiveBin: 0, originalAmountSol: 1, harvestedSol: 0 });
+    // price PnL is ~0 (active bin == deploy bin), so pnl_pct should be ~0% of the ORIGINAL 1 SOL, not 0.5.
+    assert.ok(Math.abs(r.pnl_pct) < 1e-6);
+  });
+
+  it('harvestedSol counts as realized profit toward cumulative PnL', () => {
+    const r = simulateDryRunPnl({ ...base, amountSol: 0.5, currentActiveBin: 0, originalAmountSol: 1, harvestedSol: 0.1 });
+    // 0.1 SOL harvested / 1 SOL original = +10%
+    assert.ok(Math.abs(r.pnl_pct - 10) < 1e-6);
+  });
+
+  it('a harvested amount cannot mask a real loss on the remaining leg', () => {
+    // remaining leg dumped hard (currentActiveBin far below range), harvested a small amount earlier
+    const r = simulateDryRunPnl({ ...base, amountSol: 0.5, currentActiveBin: -20, originalAmountSol: 1, harvestedSol: 0.05 });
+    assert.ok(r.pnl_pct < 0);
+  });
+});
