@@ -7,6 +7,7 @@ import {
   getPositionPnl,
   claimFees,
   closePosition,
+  rebalancePosition,
   searchPools,
 } from "./dlmm.js";
 import { getWalletBalances, swapToken } from "./wallet.js";
@@ -258,6 +259,7 @@ const toolMap = {
   check_smart_wallets_on_pool: checkSmartWalletsOnPool,
   claim_fees: claimFees,
   close_position: closePosition,
+  rebalance_position: rebalancePosition,
   get_wallet_balance: getWalletBalances,
   swap_token: swapToken,
   get_top_lpers: studyTopLPers,
@@ -564,6 +566,7 @@ const WRITE_TOOLS = new Set([
   "claim_fees",
   "close_position",
   "swap_token",
+  "rebalance_position",
 ]);
 const PROTECTED_TOOLS = new Set([
   ...WRITE_TOOLS,
@@ -828,6 +831,22 @@ async function runSafetyChecks(name, args) {
     case "swap_token": {
       // Basic check — prevent swapping when DRY_RUN is true
       // (handled inside swapToken itself, but belt-and-suspenders)
+      return { pass: true };
+    }
+
+    case "rebalance_position": {
+      if (!args.position_address) {
+        return { pass: false, reason: "position_address is required." };
+      }
+      const withdrawBps = Number(args.withdraw_bps ?? 0);
+      if (!Number.isFinite(withdrawBps) || withdrawBps < 0 || withdrawBps > 10000) {
+        return { pass: false, reason: `withdraw_bps ${args.withdraw_bps} must be between 0 and 10000.` };
+      }
+      const newBinsBelow = Number(args.new_bins_below ?? 0);
+      const newBinsAbove = Number(args.new_bins_above ?? 0);
+      if (!Number.isInteger(newBinsBelow) || !Number.isInteger(newBinsAbove) || newBinsBelow < 0 || newBinsAbove < 0) {
+        return { pass: false, reason: "new_bins_below/new_bins_above must be non-negative whole-bin integers." };
+      }
       return { pass: true };
     }
 

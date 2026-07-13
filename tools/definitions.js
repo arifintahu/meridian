@@ -301,6 +301,44 @@ WARNING: This executes a real on-chain transaction. Cannot be undone.`,
   {
     type: "function",
     function: {
+      name: "rebalance_position",
+      description: `Shift a position's range upward in place instead of closing it, when price has moved out of range on the upside.
+Same position account — no new position, no full close/reopen. Can simultaneously withdraw a bps share as realized profit (partial harvest) and fold accrued fees back in (compound).
+Only fires on upside breaks (price above the range). Never call this for a downside break.
+
+WARNING: This executes a real on-chain transaction.`,
+      parameters: {
+        type: "object",
+        properties: {
+          position_address: {
+            type: "string",
+            description: "The position public key to rebalance"
+          },
+          new_bins_below: {
+            type: "number",
+            description: "Number of bins below the new active bin for the new range"
+          },
+          new_bins_above: {
+            type: "number",
+            description: "Number of bins above the new active bin for the new range. 0 for single-sided-below positions."
+          },
+          withdraw_bps: {
+            type: "number",
+            description: "Basis points (0-10000) of the position to withdraw as realized profit. 0 = no harvest, just shift the range."
+          },
+          compound_fees: {
+            type: "boolean",
+            description: "Fold accrued fees back into the position as a top-up deposit instead of leaving them idle. Default true."
+          }
+        },
+        required: ["position_address", "new_bins_below"]
+      }
+    }
+  },
+
+  {
+    type: "function",
+    function: {
       name: "get_wallet_positions",
       description: `Get all open DLMM positions for any Solana wallet address.
 Use this when the user asks about another wallet's positions, wants to monitor a wallet,
