@@ -234,19 +234,26 @@ export function isUpsideRebalanceEligible({ activeBin, upperBin, rebalanceCount,
  * profit (SOL-denominated — see field docs). Does NOT reset
  * original_amount_sol — cumulative PnL keeps being measured against the
  * position's true original capital.
+ *
+ * Assumes newBinRange.max is the true current active bin at rebalance time —
+ * holds because every caller in this feature deploys single-sided-below
+ * (bins_above=0), mirroring deployPosition's convention. Do not call with
+ * bins_above > 0 without revisiting this.
  */
 export function recordRebalance(position_address, { newBinRange, newAmountSol, harvestedSol = 0, compoundedSol = 0 }) {
   const state = load();
   const pos = state.positions[position_address];
   if (!pos) return;
+  const harvested = Number.isFinite(harvestedSol) ? harvestedSol : 0;
+  const compounded = Number.isFinite(compoundedSol) ? compoundedSol : 0;
   pos.rebalance_count = (pos.rebalance_count || 0) + 1;
   pos.last_rebalance_at = new Date().toISOString();
   pos.bin_range = newBinRange;
   pos.active_bin_at_deploy = newBinRange.max;
   pos.amount_sol = newAmountSol;
-  pos.harvested_sol = (pos.harvested_sol || 0) + harvestedSol;
-  pos.notes.push(`Rebalanced (#${pos.rebalance_count}) at ${pos.last_rebalance_at}: harvested ${harvestedSol.toFixed(4)} SOL, compounded ${compoundedSol.toFixed(4)} SOL`);
-  pushEvent(state, { action: "rebalance", position: position_address, pool_name: pos.pool_name || pos.pool, harvestedSol, compoundedSol });
+  pos.harvested_sol = (pos.harvested_sol || 0) + harvested;
+  pos.notes.push(`Rebalanced (#${pos.rebalance_count}) at ${pos.last_rebalance_at}: harvested ${harvested.toFixed(4)} SOL, compounded ${compounded.toFixed(4)} SOL`);
+  pushEvent(state, { action: "rebalance", position: position_address, pool_name: pos.pool_name || pos.pool, harvestedSol: harvested, compoundedSol: compounded });
   save(state);
   log("state", `Position ${position_address} rebalanced (#${pos.rebalance_count}): range ${JSON.stringify(newBinRange)}`);
 }
