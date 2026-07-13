@@ -206,7 +206,7 @@ function coerceStringArray(value, key) {
   return value.map((entry) => coerceString(entry, key)).filter(Boolean);
 }
 
-function normalizeConfigValue(key, value) {
+export function normalizeConfigValue(key, value) {
   const booleanKeys = new Set([
     "excludeHighSupplyConcentration",
     "useDiscordSignals",
@@ -218,6 +218,9 @@ function normalizeConfigValue(key, value) {
     "signalStagingEnabled",
     "lpAgentRelayEnabled",
     "inRangeDrawdownExitEnabled",
+    "repeatDeployCooldownEnabled",
+    "volatilitySizedDeployEnabled",
+    "rebalanceOnUpsideBreakEnabled",
   ]);
   const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads"]);
   const stringKeys = new Set([
