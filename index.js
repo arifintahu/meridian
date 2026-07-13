@@ -26,7 +26,7 @@ import {
   createLiveMessage,
 } from "./telegram.js";
 import { generateBriefing } from "./briefing.js";
-import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, isLowYieldClose, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop, isSevereTrailingDrop } from "./state.js";
+import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, isLowYieldClose, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop, isSevereTrailingDrop, isUpsideRebalanceEligible } from "./state.js";
 import { recordPositionSnapshot, addPoolNote } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
@@ -378,6 +378,19 @@ export async function runManagementCycle({ silent = false } = {}) {
             const ok = r && r.success !== false && !r.error;
             await liveMessage?.toolFinish("claim_fees", r, ok);
             resultLines.push(`${p.pair}: ${ok ? "✅ claimed" : `❌ claim failed (${r?.error || "?"})`}`);
+          } else if (act.action === "REBALANCE") {
+            await liveMessage?.toolStart("rebalance_position");
+            const r = await executeTool("rebalance_position", {
+              position_address: p.position,
+              new_bins_below: act.newBinsBelow,
+              new_bins_above: act.newBinsAbove,
+              withdraw_bps: act.harvestBps,
+              compound_fees: true,
+            });
+            const ok = r && r.success !== false && !r.error;
+            await liveMessage?.toolFinish("rebalance_position", r, ok);
+            const harvestNote = act.harvestBps > 0 ? ` — harvested ${(act.harvestBps / 100).toFixed(0)}%` : "";
+            resultLines.push(`${p.pair}: ${ok ? `✅ rebalanced (#${r.rebalance_count ?? "?"})` : `❌ rebalance failed (${r?.error || "?"})`}${harvestNote}`);
           } else if (act.action === "INSTRUCTION") {
             const parsed = parseInstruction(p.instruction);
             if (!parsed) {
@@ -925,6 +938,25 @@ function getDeterministicCloseRule(position, managementConfig) {
   }
   if (!pnlSuspect && position.pnl_pct != null && position.pnl_pct >= managementConfig.takeProfitPct) {
     return { action: "CLOSE", rule: 2, reason: "take profit" };
+  }
+  if (
+    !pnlSuspect &&
+    isUpsideRebalanceEligible({
+      activeBin: position.active_bin,
+      upperBin: position.upper_bin,
+      rebalanceCount: tracked?.rebalance_count ?? 0,
+      rebalanceMaxCount: managementConfig.rebalanceMaxCount,
+      enabled: managementConfig.rebalanceOnUpsideBreakEnabled,
+    })
+  ) {
+    const volatilityForRange = tracked?.volatility ?? position.volatility ?? 3;
+    const harvestEligible = position.pnl_pct != null && position.pnl_pct >= managementConfig.rebalanceHarvestTriggerPct;
+    return {
+      action: "REBALANCE",
+      newBinsBelow: computeBinsBelow(volatilityForRange),
+      newBinsAbove: 0,
+      harvestBps: harvestEligible ? managementConfig.rebalanceHarvestBps : 0,
+    };
   }
   if (
     position.active_bin != null &&
