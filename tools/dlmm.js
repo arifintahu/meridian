@@ -20,6 +20,7 @@ import {
   markInRange,
   recordClaim,
   recordClose,
+  recordRebalance,
   getTrackedPosition,
   getTrackedPositions,
   minutesOutOfRange,
@@ -1303,6 +1304,8 @@ async function buildDryRunPositions(walletAddress) {
         feePerTvl24h,
         minutesInRange,
         solPrice,
+        originalAmountSol: t.original_amount_sol ?? t.amount_sol,
+        harvestedSol: t.harvested_sol ?? 0,
       });
       positions.push({
         ...refreshed,
@@ -2302,6 +2305,158 @@ export async function closePosition({ position_address, reason }) {
     };
   } catch (error) {
     log("close_error", error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+// ─── Rebalance Position (in-place, upside-only) ─────────────────
+export async function rebalancePosition({ position_address, new_bins_below, new_bins_above = 0, withdraw_bps = 0, compound_fees = true }) {
+  position_address = normalizeMint(position_address);
+  const tracked = getTrackedPosition(position_address);
+  if (!tracked) return { success: false, error: "Position not tracked" };
+
+  if (process.env.DRY_RUN === "true") {
+    const pool = await getPool(tracked.pool).catch(() => null);
+    const activeBin = pool ? await pool.getActiveBin().catch(() => null) : null;
+    const currentBinId = activeBin?.binId ?? tracked.active_bin_at_deploy;
+
+    const lastTouch = tracked.last_rebalance_at || tracked.deployed_at;
+    const minutesSinceLastTouch = lastTouch
+      ? Math.floor((Date.now() - new Date(lastTouch).getTime()) / 60000)
+      : 0;
+
+    let solPrice = 0;
+    try { solPrice = (await getWalletBalances())?.sol_price ?? 0; } catch { /* USD fields stay 0 */ }
+
+    let feePerTvl24h = null;
+    try {
+      const { getPoolDetail } = await import("./screening.js");
+      const detail = await getPoolDetail({ pool_address: tracked.pool, timeframe: "24h" });
+      const ratio = Number(detail?.fee_active_tvl_ratio ?? detail?.fee_tvl_ratio);
+      feePerTvl24h = Number.isFinite(ratio) ? ratio : null;
+    } catch { /* discovery API miss — leave null, fees_sol will be 0 */ }
+
+    const sim = simulateDryRunPnl({
+      amountSol: tracked.amount_sol,
+      binRange: tracked.bin_range,
+      activeBinAtDeploy: tracked.active_bin_at_deploy,
+      currentActiveBin: currentBinId,
+      binStep: tracked.bin_step,
+      strategy: tracked.strategy,
+      feePerTvl24h,
+      minutesInRange: minutesSinceLastTouch,
+      solPrice,
+    });
+
+    const legValueSol = sim.position_value_sol;
+    const compoundedSol = compound_fees ? sim.fees_sol : 0;
+    const preHarvestValueSol = legValueSol + compoundedSol;
+    const harvestedSol = (Number(withdraw_bps) / 10000) * preHarvestValueSol;
+    const newAmountSol = Math.max(0, preHarvestValueSol - harvestedSol);
+
+    const newActiveBin = currentBinId;
+    const newBinRange = { min: newActiveBin - new_bins_below, max: newActiveBin + new_bins_above };
+
+    recordRebalance(position_address, {
+      newBinRange,
+      newAmountSol,
+      harvestedSol,
+      compoundedSol,
+    });
+    _positionsCacheAt = 0;
+
+    log("dry_run", `Paper position rebalanced: ${position_address} — new range [${newBinRange.min}, ${newBinRange.max}]`);
+    return {
+      success: true,
+      dry_run: true,
+      position: position_address,
+      new_bin_range: newBinRange,
+      new_amount_sol: Math.round(newAmountSol * 1e6) / 1e6,
+      harvested_sol: Math.round(harvestedSol * 1e6) / 1e6,
+      compounded_sol: Math.round(compoundedSol * 1e6) / 1e6,
+      rebalance_count: (tracked.rebalance_count || 0) + 1,
+      message: `DRY RUN — rebalanced to bins [${newBinRange.min}, ${newBinRange.max}]`,
+    };
+  }
+
+  try {
+    log("rebalance", `Rebalancing position: ${position_address}`);
+    const wallet = getWallet();
+    const poolAddress = await lookupPoolForPosition(position_address, wallet.publicKey.toString());
+    poolCache.delete(poolAddress.toString());
+    const pool = await getPool(poolAddress);
+    const { StrategyType } = await getDLMM();
+
+    const posInfo = await pool.getPosition(new PublicKey(position_address));
+    const positionData = posInfo.positionData;
+
+    const strategyMap = {
+      spot: StrategyType.Spot,
+      curve: StrategyType.Curve,
+      bid_ask: StrategyType.BidAsk,
+    };
+    const strategyType = strategyMap[tracked.strategy] ?? StrategyType.BidAsk;
+
+    // positionData.feeX/feeY are the pending accrued fees, per-token. Compounding
+    // folds both back in as top-up deposits instead of leaving them claimed-to-wallet.
+    const topUpAmountX = compound_fees ? positionData.feeX : new BN(0);
+    const topUpAmountY = compound_fees ? positionData.feeY : new BN(0);
+    const xWithdrawBps = new BN(0);
+    const yWithdrawBps = new BN(Math.max(0, Math.round(Number(withdraw_bps) || 0)));
+
+    const rebalanceResponse = await pool.simulateRebalancePositionWithBalancedStrategy(
+      new PublicKey(position_address),
+      positionData,
+      strategyType,
+      topUpAmountX,
+      topUpAmountY,
+      xWithdrawBps,
+      yWithdrawBps,
+    );
+
+    const { initBinArrayInstructions, rebalancePositionInstruction } = await pool.rebalancePosition(
+      rebalanceResponse,
+      new BN(10), // maxActiveBinSlippage, bins — matches the tolerance used elsewhere in this file for active-bin drift
+      wallet.publicKey,
+    );
+
+    const allIx = [...initBinArrayInstructions, ...rebalancePositionInstruction];
+    if (allIx.length === 0) {
+      return { success: false, error: "Rebalance produced no instructions — nothing to do" };
+    }
+    const tx = new Transaction().add(...allIx);
+    const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet]);
+
+    const activeBin = await pool.getActiveBin();
+    const newMinBinId = activeBin.binId - new_bins_below;
+    const newMaxBinId = activeBin.binId + new_bins_above;
+
+    const harvestedSol = rebalanceResponse.simulationResult.actualAmountYWithdrawn.toNumber() / 1e9;
+    const compoundedSol = rebalanceResponse.simulationResult.actualAmountYDeposited.toNumber() / 1e9;
+    const preRebalanceYSol = Number(positionData.totalYAmount) / 1e9;
+    const newAmountSol = Math.max(0, preRebalanceYSol - harvestedSol + compoundedSol);
+
+    _positionsCacheAt = 0;
+    recordRebalance(position_address, {
+      newBinRange: { min: newMinBinId, max: newMaxBinId },
+      newAmountSol,
+      harvestedSol,
+      compoundedSol,
+    });
+
+    log("rebalance", `SUCCESS tx: ${txHash} — new range [${newMinBinId}, ${newMaxBinId}]`);
+    return {
+      success: true,
+      position: position_address,
+      tx: txHash,
+      new_bin_range: { min: newMinBinId, max: newMaxBinId },
+      new_amount_sol: Math.round(newAmountSol * 1e6) / 1e6,
+      harvested_sol: Math.round(harvestedSol * 1e6) / 1e6,
+      compounded_sol: Math.round(compoundedSol * 1e6) / 1e6,
+      rebalance_count: (tracked.rebalance_count || 0) + 1,
+    };
+  } catch (error) {
+    log("rebalance_error", error.message);
     return { success: false, error: error.message };
   }
 }
