@@ -9,6 +9,8 @@
   "maxDeployAmount": 50,
   "gasReserve": 0.2,
   "positionSizePct": 0.35,
+  "volatilitySizedDeployEnabled": true,
+  "volatilitySizeFloor": 0.5,
 
   "strategy": "bid_ask",
   "minBinsBelow": 35,

@@ -389,6 +389,8 @@ const toolMap = {
       deployAmountSol: ["management", "deployAmountSol"],
       gasReserve: ["management", "gasReserve"],
       positionSizePct: ["management", "positionSizePct"],
+      volatilitySizedDeployEnabled: ["management", "volatilitySizedDeployEnabled"],
+      volatilitySizeFloor: ["management", "volatilitySizeFloor"],
       minAgeBeforeYieldCheck: ["management", "minAgeBeforeYieldCheck"],
       inRangeDrawdownExitEnabled: ["management", "inRangeDrawdownExitEnabled"],
       inRangeDrawdownPct: ["management", "inRangeDrawdownPct"],

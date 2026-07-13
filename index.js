@@ -613,6 +613,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     const best = passing[0];
     const bestActiveBin = activeBinResults[0]?.status === "fulfilled" ? activeBinResults[0].value?.binId : null;
     const binsBelow = computeBinsBelow(best.pool.volatility);
+    const scaledDeployAmount = computeVolatilityScaledAmount(deployAmount, best.pool.volatility);
 
     let deployAttempted = false;
     let deploySucceeded = false;
@@ -621,7 +622,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
       deployAttempted = true;
       deployResult = await executeTool("deploy_position", {
         pool_address: best.pool.pool,
-        amount_y: deployAmount,
+        amount_y: scaledDeployAmount,
         strategy: deployStrategy,
         bins_below: binsBelow,
         bins_above: 0,
@@ -650,13 +651,13 @@ export async function runScreeningCycle({ silent = false } = {}) {
           smartWallets: best.sw?.in_pool?.map((w) => w.name).join(", ") || "none",
         },
         deployResult,
-        deployAmount,
+        deployAmount: scaledDeployAmount,
         strategy: deployStrategy,
       });
       appendDecision({
         type: "deploy",
         actor: "SCREENER",
-        summary: `Deployed ${deployAmount} SOL into ${best.pool.name}`,
+        summary: `Deployed ${scaledDeployAmount} SOL into ${best.pool.name}`,
         reason: "Top-scored surviving candidate",
         pool: best.pool.pool,
         pool_name: best.pool.name,
@@ -1351,9 +1352,10 @@ async function deployLatestCandidate(index) {
   }
   const deployAmount = computeDeployAmount((await getWalletBalances()).sol);
   const binsBelow = computeBinsBelow(candidate.volatility);
+  const scaledDeployAmount = computeVolatilityScaledAmount(deployAmount, candidate.volatility);
   const result = await executeTool("deploy_position", {
     pool_address: candidate.pool,
-    amount_y: deployAmount,
+    amount_y: scaledDeployAmount,
     strategy: config.strategy.strategy,
     bins_below: binsBelow,
     bins_above: 0,
@@ -1369,7 +1371,7 @@ async function deployLatestCandidate(index) {
   if (result?.success === false || result?.error) {
     throw new Error(result.error || "Deploy failed");
   }
-  return { result, candidate, deployAmount, binsBelow };
+  return { result, candidate, deployAmount: scaledDeployAmount, binsBelow };
 }
 
 function refreshPrompt() {
@@ -1690,6 +1692,27 @@ function computeBinsBelow(volatility) {
   const lo = config.strategy.minBinsBelow;
   const hi = config.strategy.maxBinsBelow;
   return Math.max(lo, Math.min(hi, Math.round(lo + (parsedVolatility / 5) * (hi - lo))));
+}
+
+// Tapers the deploy amount down for riskier (higher entry-volatility) candidates —
+// stop-loss losses are size-invariant to entry volatility (same $ hit whether the
+// pool was calm or wild at entry), so shrinking the bet on the riskier entries cuts
+// tail-loss $ without touching win rate. No-op (returns baseAmount unchanged) if
+// screening.maxVolatility is unset — there's no configured risk ceiling to scale
+// against. Never scales below deployAmountSol, the existing deploy-safety floor
+// enforced in runSafetyChecks.
+function computeVolatilityScaledAmount(baseAmount, volatility) {
+  if (!config.management.volatilitySizedDeployEnabled) return baseAmount;
+  const capVol = Number(config.screening.maxVolatility);
+  if (!Number.isFinite(capVol) || capVol <= 0) return baseAmount;
+  const parsedVolatility = Number(volatility);
+  if (!Number.isFinite(parsedVolatility) || parsedVolatility <= 0) {
+    throw new Error(`Invalid volatility ${volatility ?? "unknown"} — refusing volatility-scaled deploy.`);
+  }
+  const floorFactor = Math.max(0, Math.min(1, config.management.volatilitySizeFloor ?? 0.5));
+  const factor = Math.max(floorFactor, Math.min(1, 1 - (parsedVolatility / capVol) * (1 - floorFactor)));
+  const hardFloor = config.management.deployAmountSol;
+  return parseFloat(Math.max(hardFloor, baseAmount * factor).toFixed(2));
 }
 
 // Register restarter — when update_config changes intervals, running cron jobs get replaced

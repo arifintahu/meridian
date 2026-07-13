@@ -118,6 +118,12 @@ export const config = {
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
     positionSizePct:       u.positionSizePct       ?? 0.35,
+    // Volatility-scaled sizing — tapers the deploy amount down for riskier (higher
+    // entry-volatility) candidates. No-op if screening.maxVolatility is unset, since
+    // there's no configured risk ceiling to scale against. Never goes below
+    // deployAmountSol (the existing deploy-safety floor).
+    volatilitySizedDeployEnabled: u.volatilitySizedDeployEnabled ?? true,
+    volatilitySizeFloor:   u.volatilitySizeFloor   ?? 0.5, // min size fraction at maxVolatility
     // Trailing take-profit
     trailingTakeProfit:    u.trailingTakeProfit    ?? true,
     trailingTriggerPct:    u.trailingTriggerPct    ?? 3,    // activate trailing at X% PnL

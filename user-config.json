@@ -7,6 +7,8 @@
   "minSolToOpen": 0.55,
   "gasReserve": 0.2,
   "positionSizePct": 0.35,
+  "volatilitySizedDeployEnabled": true,
+  "volatilitySizeFloor": 0.5,
   "strategy": "bid_ask",
   "minBinsBelow": 35,
   "maxBinsBelow": 69,
